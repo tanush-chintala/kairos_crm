@@ -1,0 +1,150 @@
+"""Query helpers per table. Supabase is the single source of truth — every
+view reads fresh through these; nothing is cached across reruns."""
+
+from __future__ import annotations
+
+from db.client import get_client
+
+
+def list_users(active_only: bool = True) -> list[dict]:
+    q = get_client().table("users").select("*").order("name")
+    if active_only:
+        q = q.eq("active", True)
+    return q.execute().data
+
+
+def add_user(name: str) -> None:
+    get_client().table("users").insert({"name": name}).execute()
+
+
+def set_user_active(user_id: int, active: bool) -> None:
+    get_client().table("users").update({"active": active}).eq("id", user_id).execute()
+
+
+def list_channel_types(active_only: bool = True) -> list[dict]:
+    q = get_client().table("channel_types").select("*").order("label")
+    if active_only:
+        q = q.eq("active", True)
+    return q.execute().data
+
+
+def add_channel_type(label: str) -> None:
+    get_client().table("channel_types").insert({"label": label}).execute()
+
+
+def set_channel_type_active(channel_id: int, active: bool) -> None:
+    get_client().table("channel_types").update({"active": active}).eq("id", channel_id).execute()
+
+
+def list_accounts(
+    owner_id: int | None = None,
+    stage: str | None = None,
+    channel_id: int | None = None,
+    city: str | None = None,
+    search: str | None = None,
+) -> list[dict]:
+    q = get_client().table("account_overview").select("*")
+    if owner_id:
+        q = q.eq("kairos_owner_id", owner_id)
+    if stage:
+        q = q.eq("pipeline_stage", stage)
+    if channel_id:
+        q = q.eq("channel_type_id", channel_id)
+    if city:
+        q = q.ilike("city", f"%{city}%")
+    if search:
+        q = q.ilike("practice_name", f"%{search}%")
+    return q.order("practice_name").execute().data
+
+
+def get_account(account_id: int) -> dict | None:
+    rows = (
+        get_client().table("account_overview").select("*").eq("id", account_id).execute().data
+    )
+    return rows[0] if rows else None
+
+
+def create_account(fields: dict) -> dict:
+    return get_client().table("accounts").insert(fields).execute().data[0]
+
+
+def update_account(account_id: int, fields: dict) -> None:
+    get_client().table("accounts").update(fields).eq("id", account_id).execute()
+
+
+def delete_account(account_id: int) -> None:
+    get_client().table("accounts").delete().eq("id", account_id).execute()
+
+
+def list_contacts(account_id: int) -> list[dict]:
+    return (
+        get_client().table("contacts").select("*").eq("account_id", account_id)
+        .order("name").execute().data
+    )
+
+
+def create_contact(fields: dict) -> None:
+    get_client().table("contacts").insert(fields).execute()
+
+
+def update_contact(contact_id: int, fields: dict) -> None:
+    get_client().table("contacts").update(fields).eq("id", contact_id).execute()
+
+
+def delete_contact(contact_id: int) -> None:
+    get_client().table("contacts").delete().eq("id", contact_id).execute()
+
+
+def list_activities(account_id: int) -> list[dict]:
+    return (
+        get_client().table("activities").select("*").eq("account_id", account_id)
+        .order("date", desc=True).order("id", desc=True).execute().data
+    )
+
+
+def log_activity(fields: dict) -> None:
+    # The activities_sync_next_action trigger updates the parent account's
+    # next_action fields atomically with this insert — do not update here too.
+    get_client().table("activities").insert(fields).execute()
+
+
+def list_demos(account_id: int) -> list[dict]:
+    return (
+        get_client().table("demos").select("*").eq("account_id", account_id)
+        .order("demo_date", desc=True).execute().data
+    )
+
+
+def list_all_demos() -> list[dict]:
+    return get_client().table("demos").select("*").execute().data
+
+
+def create_demo(fields: dict) -> None:
+    get_client().table("demos").insert(fields).execute()
+
+
+def update_demo(demo_id: int, fields: dict) -> None:
+    get_client().table("demos").update(fields).eq("id", demo_id).execute()
+
+
+def delete_demo(demo_id: int) -> None:
+    get_client().table("demos").delete().eq("id", demo_id).execute()
+
+
+def list_templates(category: str | None = None) -> list[dict]:
+    q = get_client().table("email_templates").select("*").order("name")
+    if category:
+        q = q.eq("category", category)
+    return q.execute().data
+
+
+def create_template(fields: dict) -> None:
+    get_client().table("email_templates").insert(fields).execute()
+
+
+def update_template(template_id: int, fields: dict) -> None:
+    get_client().table("email_templates").update(fields).eq("id", template_id).execute()
+
+
+def delete_template(template_id: int) -> None:
+    get_client().table("email_templates").delete().eq("id", template_id).execute()

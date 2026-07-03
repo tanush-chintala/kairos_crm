@@ -1,0 +1,403 @@
+from __future__ import annotations
+
+from datetime import timedelta
+
+import streamlit as st
+
+from db import queries
+from utils.constants import (
+    ACTIVITY_TYPES,
+    COMPETITOR_TOOLS,
+    DECISION_MAKER_REACHED,
+    DEMO_STATUSES,
+    LOST_REASONS,
+    PIPELINE_STAGES,
+    STALE_DAYS,
+)
+from utils.dedup import find_duplicates
+from utils.tz import central_today, parse_date
+
+_users_all = queries.list_users(active_only=False)
+_channels_all = queries.list_channel_types(active_only=False)
+_user_name = {u["id"]: u["name"] for u in _users_all}
+_channel_name = {c["id"]: c["label"] for c in _channels_all}
+
+
+def _id_options(rows: list[dict], keep_id=None) -> list:
+    ids = [r["id"] for r in rows if r["active"] or r["id"] == keep_id]
+    return [None] + ids
+
+
+def _owner_select(label: str, key: str, current_id=None):
+    default = current_id if current_id is not None else st.session_state["current_user"]["id"]
+    options = _id_options(_users_all, keep_id=current_id)
+    index = options.index(default) if default in options else 0
+    return st.selectbox(
+        label, options, index=index, key=key,
+        format_func=lambda i: _user_name.get(i, "—") if i else "—",
+    )
+
+
+def _channel_select(label: str, key: str, current_id=None):
+    options = _id_options(_channels_all, keep_id=current_id)
+    index = options.index(current_id) if current_id in options else 0
+    return st.selectbox(
+        label, options, index=index, key=key,
+        format_func=lambda i: _channel_name.get(i, "—") if i else "—",
+    )
+
+
+def _nullable_select(label: str, values: list[str], key: str, current=None):
+    options = ["—"] + values
+    index = options.index(current) if current in options else 0
+    picked = st.selectbox(label, options, index=index, key=key)
+    return None if picked == "—" else picked
+
+
+def _account_form(form_key: str, defaults: dict) -> dict | None:
+    """Shared add/edit account form. Returns the payload on submit, else None."""
+    with st.form(form_key):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            practice_name = st.text_input("Practice name *", value=defaults.get("practice_name") or "")
+            practice_email = st.text_input("Practice email", value=defaults.get("practice_email") or "")
+            practice_phone = st.text_input("Practice phone", value=defaults.get("practice_phone") or "")
+            website = st.text_input("Website", value=defaults.get("website") or "")
+            city = st.text_input("City", value=defaults.get("city") or "")
+            pms = st.text_input("PMS", value=defaults.get("pms") or "")
+        with c2:
+            owner_id = _owner_select("Kairos owner", f"{form_key}_owner", defaults.get("kairos_owner_id"))
+            channel_id = _channel_select("Channel type", f"{form_key}_channel", defaults.get("channel_type_id"))
+            source_detail = st.text_input("Source detail", value=defaults.get("source_detail") or "")
+            stage = st.selectbox(
+                "Pipeline stage", PIPELINE_STAGES,
+                index=PIPELINE_STAGES.index(defaults.get("pipeline_stage") or "New Lead"),
+                key=f"{form_key}_stage",
+            )
+            lost_reason = _nullable_select(
+                "Lost reason (Closed Lost only)", LOST_REASONS, f"{form_key}_lost", defaults.get("lost_reason")
+            )
+            competitor_tool = _nullable_select(
+                "Current tool", COMPETITOR_TOOLS, f"{form_key}_tool", defaults.get("competitor_tool")
+            )
+        with c3:
+            next_action = st.text_input("Next action", value=defaults.get("next_action") or "")
+            next_action_due = st.date_input(
+                "Next action due date", value=parse_date(defaults.get("next_action_due_date")),
+                key=f"{form_key}_due",
+            )
+            best_contact = st.text_input("Best contact", value=defaults.get("best_contact") or "")
+            decision_maker = st.text_input("Decision maker", value=defaults.get("decision_maker") or "")
+            dm_reached = st.selectbox(
+                "Decision maker reached", DECISION_MAKER_REACHED,
+                index=DECISION_MAKER_REACHED.index(defaults.get("decision_maker_reached") or "Unknown"),
+                key=f"{form_key}_dm",
+            )
+        initial_summary = st.text_area(
+            "Initial encounter summary", value=defaults.get("initial_encounter_summary") or ""
+        )
+        if not st.form_submit_button("Save", icon=":material/save:"):
+            return None
+
+    if not practice_name.strip():
+        st.error("Practice name is required.")
+        return None
+    return {
+        "practice_name": practice_name.strip(),
+        "practice_email": practice_email.strip() or None,
+        "practice_phone": practice_phone.strip() or None,
+        "website": website.strip() or None,
+        "city": city.strip() or None,
+        "kairos_owner_id": owner_id,
+        "channel_type_id": channel_id,
+        "source_detail": source_detail.strip() or None,
+        "initial_encounter_summary": initial_summary.strip() or None,
+        "pipeline_stage": stage,
+        "next_action": next_action.strip() or None,
+        "next_action_due_date": next_action_due.isoformat() if next_action_due else None,
+        "lost_reason": lost_reason,
+        "competitor_tool": competitor_tool,
+        "pms": pms.strip() or None,
+        "best_contact": best_contact.strip() or None,
+        "decision_maker": decision_maker.strip() or None,
+        "decision_maker_reached": dm_reached,
+    }
+
+
+def _show_matches(matches: list[dict]) -> None:
+    for m in matches:
+        row = m["match"]
+        where = f"import row {m['batch_row'] + 1}" if "batch_row" in m else "existing account"
+        st.warning(
+            f"**{row.get('practice_name')}** ({row.get('city') or 'no city'}, "
+            f"{row.get('practice_phone') or 'no phone'}) — {where}: "
+            + "; ".join(m["reasons"])
+        )
+
+
+def _render_list() -> None:
+    left, right = st.columns([5, 1], vertical_alignment="center")
+    left.title("Accounts")
+    if right.button("Refresh", icon=":material/refresh:", use_container_width=True):
+        st.rerun()
+
+    with st.expander("Add account", icon=":material/add:"):
+        payload = _account_form("add_account", {})
+        if payload:
+            matches = find_duplicates(payload, queries.list_accounts())
+            if matches:
+                st.session_state["pending_account"] = payload
+                st.session_state["pending_matches"] = matches
+            else:
+                queries.create_account(payload)
+                st.success(f"Added {payload['practice_name']}.")
+
+        if st.session_state.get("pending_account"):
+            st.error("Possible duplicate — review before saving:")
+            _show_matches(st.session_state["pending_matches"])
+            c1, c2 = st.columns(2)
+            if c1.button("Save anyway", icon=":material/warning:"):
+                queries.create_account(st.session_state.pop("pending_account"))
+                st.session_state.pop("pending_matches", None)
+                st.rerun()
+            if c2.button("Discard"):
+                st.session_state.pop("pending_account", None)
+                st.session_state.pop("pending_matches", None)
+                st.rerun()
+
+    with st.expander("Filters and search", icon=":material/filter_list:", expanded=True):
+        f1, f2, f3, f4, f5 = st.columns(5)
+        search = f1.text_input("Search practice name")
+        owner = f2.selectbox(
+            "Kairos owner", [None] + [u["id"] for u in _users_all],
+            format_func=lambda i: _user_name.get(i, "All") if i else "All",
+        )
+        stage = f3.selectbox("Pipeline stage", [None] + PIPELINE_STAGES, format_func=lambda s: s or "All")
+        channel = f4.selectbox(
+            "Channel type", [None] + [c["id"] for c in _channels_all],
+            format_func=lambda i: _channel_name.get(i, "All") if i else "All",
+        )
+        city = f5.text_input("City")
+        g1, g2, g3, g4 = st.columns([1, 1, 2, 2])
+        due_today_only = g1.checkbox("Due today")
+        overdue_only = g2.checkbox("Overdue")
+        no_activity = g3.checkbox("No activity in X+ days")
+        stale_days = g4.number_input("X days", min_value=1, value=STALE_DAYS, disabled=not no_activity)
+        sort_by = st.selectbox(
+            "Sort by",
+            ["Practice name", "Due date", "Last action (oldest first)", "Created (newest first)", "Stage"],
+        )
+
+    accounts = queries.list_accounts(
+        owner_id=owner, stage=stage, channel_id=channel,
+        city=city or None, search=search or None,
+    )
+
+    today = central_today()
+    if due_today_only:
+        accounts = [a for a in accounts if parse_date(a.get("next_action_due_date")) == today]
+    if overdue_only:
+        accounts = [
+            a for a in accounts
+            if (d := parse_date(a.get("next_action_due_date"))) and d < today
+        ]
+    if no_activity:
+        cutoff = today - timedelta(days=int(stale_days))
+        accounts = [
+            a for a in accounts
+            if (d := parse_date(a.get("last_action_date"))) and d <= cutoff
+        ]
+
+    far_future = "9999-12-31"
+    if sort_by == "Due date":
+        accounts.sort(key=lambda a: str(a.get("next_action_due_date") or far_future))
+    elif sort_by == "Last action (oldest first)":
+        accounts.sort(key=lambda a: str(a.get("last_action_date") or ""))
+    elif sort_by == "Created (newest first)":
+        accounts.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
+    elif sort_by == "Stage":
+        accounts.sort(key=lambda a: PIPELINE_STAGES.index(a["pipeline_stage"]))
+
+    st.caption(f"{len(accounts)} accounts")
+    for acct in accounts:
+        cols = st.columns([3, 2, 2, 2, 3, 2, 1], vertical_alignment="center")
+        cols[0].markdown(f"**{acct['practice_name']}**")
+        cols[1].write(acct.get("city") or "—")
+        cols[2].write(_user_name.get(acct.get("kairos_owner_id"), "—"))
+        cols[3].write(acct.get("pipeline_stage"))
+        cols[4].write(acct.get("next_action") or "—")
+        cols[5].write(str(acct.get("next_action_due_date") or "—"))
+        if cols[6].button("Open", key=f"open_{acct['id']}"):
+            st.session_state["selected_account_id"] = acct["id"]
+            st.rerun()
+
+
+def _render_detail(account_id: int) -> None:
+    account = queries.get_account(account_id)
+    if account is None:
+        st.session_state.pop("selected_account_id", None)
+        st.rerun()
+
+    if st.button("Back to accounts", icon=":material/arrow_back:"):
+        st.session_state.pop("selected_account_id", None)
+        st.rerun()
+
+    st.title(account["practice_name"])
+    st.caption(
+        f"Owner: {_user_name.get(account.get('kairos_owner_id'), '—')} | "
+        f"Stage: {account.get('pipeline_stage')} | "
+        f"Channel: {_channel_name.get(account.get('channel_type_id'), '—')} | "
+        f"Last action: {account.get('last_action_date') or '—'}"
+    )
+    # "Current state" is the latest activity's summary, read-only — derived,
+    # never stored (spec 5.1).
+    st.info(
+        f"**Current state:** {account.get('latest_activity_summary') or 'No activity logged yet.'}"
+    )
+
+    details, contacts, activity, demos = st.tabs(["Details", "Contacts", "Activity Log", "Demos"])
+
+    with details:
+        payload = _account_form("edit_account", account)
+        if payload:
+            queries.update_account(account_id, payload)
+            st.success("Saved.")
+            st.rerun()
+        with st.expander("Delete account", icon=":material/delete:"):
+            st.warning("Deletes the account and all its contacts, activities, and demos.")
+            if st.checkbox("I understand", key="confirm_delete_account"):
+                if st.button("Delete permanently", icon=":material/delete_forever:"):
+                    queries.delete_account(account_id)
+                    st.session_state.pop("selected_account_id", None)
+                    st.rerun()
+
+    with contacts:
+        with st.form("add_contact", clear_on_submit=True):
+            st.markdown("**Add contact**")
+            c1, c2, c3, c4 = st.columns(4)
+            name = c1.text_input("Name *")
+            role = c2.text_input("Role")
+            email = c3.text_input("Email")
+            phone = c4.text_input("Phone")
+            if st.form_submit_button("Add", icon=":material/person_add:"):
+                if name.strip():
+                    queries.create_contact({
+                        "account_id": account_id, "name": name.strip(),
+                        "role": role.strip() or None, "email": email.strip() or None,
+                        "phone": phone.strip() or None,
+                    })
+                    st.rerun()
+                else:
+                    st.error("Name is required.")
+        for contact in queries.list_contacts(account_id):
+            with st.expander(f"{contact['name']} — {contact.get('role') or 'no role'}"):
+                with st.form(f"edit_contact_{contact['id']}"):
+                    c1, c2, c3, c4 = st.columns(4)
+                    name = c1.text_input("Name *", value=contact["name"])
+                    role = c2.text_input("Role", value=contact.get("role") or "")
+                    email = c3.text_input("Email", value=contact.get("email") or "")
+                    phone = c4.text_input("Phone", value=contact.get("phone") or "")
+                    if st.form_submit_button("Save"):
+                        queries.update_contact(contact["id"], {
+                            "name": name.strip() or contact["name"],
+                            "role": role.strip() or None,
+                            "email": email.strip() or None,
+                            "phone": phone.strip() or None,
+                        })
+                        st.rerun()
+                if st.button("Delete contact", key=f"del_contact_{contact['id']}", icon=":material/delete:"):
+                    queries.delete_contact(contact["id"])
+                    st.rerun()
+
+    with activity:
+        with st.form("add_activity", clear_on_submit=True):
+            st.markdown("**Log activity**")
+            c1, c2, c3 = st.columns(3)
+            act_date = c1.date_input("Date", value=central_today())
+            with c2:
+                owner_id = _owner_select("Kairos owner", "activity_owner")
+            act_type = c3.selectbox("Type", ACTIVITY_TYPES)
+            summary = st.text_area("Summary")
+            c4, c5 = st.columns(2)
+            next_action = c4.text_input("Next action")
+            next_due = c5.date_input("Next action due date", value=None)
+            st.caption("Setting a next action here updates the account's current next action.")
+            if st.form_submit_button("Log", icon=":material/add_task:"):
+                queries.log_activity({
+                    "account_id": account_id,
+                    "date": act_date.isoformat(),
+                    "kairos_owner_id": owner_id,
+                    "activity_type": act_type,
+                    "summary": summary.strip() or None,
+                    "next_action": next_action.strip() or None,
+                    "next_action_due_date": next_due.isoformat() if next_due else None,
+                })
+                st.rerun()
+        for entry in queries.list_activities(account_id):
+            st.markdown(
+                f"**{entry['date']}** — {entry['activity_type']} — "
+                f"{_user_name.get(entry.get('kairos_owner_id'), '—')}"
+            )
+            if entry.get("summary"):
+                st.write(entry["summary"])
+            if entry.get("next_action"):
+                st.caption(
+                    f"Next action: {entry['next_action']}"
+                    + (f" (due {entry['next_action_due_date']})" if entry.get("next_action_due_date") else "")
+                )
+            st.divider()
+
+    with demos:
+        with st.form("add_demo", clear_on_submit=True):
+            st.markdown("**Add demo**")
+            c1, c2, c3 = st.columns(3)
+            demo_date = c1.date_input("Demo date", value=None)
+            status = c2.selectbox("Status", DEMO_STATUSES)
+            attendees = c3.text_input("Attendees")
+            c4, c5, c6 = st.columns(3)
+            pain_points = c4.text_area("Pain points")
+            objections = c5.text_area("Objections")
+            follow_up = c6.text_area("Follow-up required")
+            if st.form_submit_button("Add", icon=":material/co_present:"):
+                queries.create_demo({
+                    "account_id": account_id,
+                    "demo_date": demo_date.isoformat() if demo_date else None,
+                    "status": status,
+                    "attendees": attendees.strip() or None,
+                    "pain_points": pain_points.strip() or None,
+                    "objections": objections.strip() or None,
+                    "follow_up_required": follow_up.strip() or None,
+                })
+                st.rerun()
+        for demo in queries.list_demos(account_id):
+            with st.expander(f"{demo.get('demo_date') or 'No date'} — {demo['status']}"):
+                with st.form(f"edit_demo_{demo['id']}"):
+                    c1, c2, c3 = st.columns(3)
+                    demo_date = c1.date_input("Demo date", value=parse_date(demo.get("demo_date")))
+                    status = c2.selectbox(
+                        "Status", DEMO_STATUSES, index=DEMO_STATUSES.index(demo["status"])
+                    )
+                    attendees = c3.text_input("Attendees", value=demo.get("attendees") or "")
+                    c4, c5, c6 = st.columns(3)
+                    pain_points = c4.text_area("Pain points", value=demo.get("pain_points") or "")
+                    objections = c5.text_area("Objections", value=demo.get("objections") or "")
+                    follow_up = c6.text_area("Follow-up required", value=demo.get("follow_up_required") or "")
+                    if st.form_submit_button("Save"):
+                        queries.update_demo(demo["id"], {
+                            "demo_date": demo_date.isoformat() if demo_date else None,
+                            "status": status,
+                            "attendees": attendees.strip() or None,
+                            "pain_points": pain_points.strip() or None,
+                            "objections": objections.strip() or None,
+                            "follow_up_required": follow_up.strip() or None,
+                        })
+                        st.rerun()
+                if st.button("Delete demo", key=f"del_demo_{demo['id']}", icon=":material/delete:"):
+                    queries.delete_demo(demo["id"])
+                    st.rerun()
+
+
+if st.session_state.get("selected_account_id"):
+    _render_detail(st.session_state["selected_account_id"])
+else:
+    _render_list()
