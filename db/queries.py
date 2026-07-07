@@ -102,6 +102,13 @@ def list_activities(account_id: int) -> list[dict]:
     )
 
 
+def list_recent_activities(limit: int = 20) -> list[dict]:
+    return (
+        get_client().table("activities").select("*, accounts(practice_name)")
+        .order("date", desc=True).order("id", desc=True).limit(limit).execute().data
+    )
+
+
 def log_activity(fields: dict) -> None:
     # The activities_sync_next_action trigger updates the parent account's
     # next_action fields atomically with this insert — do not update here too.

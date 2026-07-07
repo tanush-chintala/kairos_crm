@@ -40,6 +40,7 @@ if st.session_state.get("current_user") is None:
 pages = st.navigation(
     [
         st.Page("views/dashboard.py", title="Dashboard", icon=":material/dashboard:", default=True),
+        st.Page("views/overview.py", title="Team Overview", icon=":material/groups:"),
         st.Page("views/accounts.py", title="Accounts", icon=":material/business:"),
         st.Page("views/email_templates.py", title="Email Templates", icon=":material/mail:"),
         st.Page("views/csv_import.py", title="CSV Import", icon=":material/upload_file:"),

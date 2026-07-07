@@ -135,6 +135,34 @@ def _show_matches(matches: list[dict]) -> None:
         )
 
 
+# Streamlit has no native striping or header row for st.columns lists, so the
+# header and each row get keyed containers that this CSS can target.
+_LIST_CSS = """
+<style>
+[class*="st-key-accounts_header"],
+[class*="st-key-accounts_row_"] {
+    padding: 0.15rem 0.6rem;
+    border-radius: 0.5rem;
+}
+[class*="st-key-accounts_header"] {
+    background-color: rgba(151, 166, 195, 0.35);
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+}
+[class*="st-key-accounts_row_even"] {
+    background-color: rgba(151, 166, 195, 0.12);
+}
+[class*="st-key-accounts_row_"] button,
+[class*="st-key-accounts_row_"] button p {
+    white-space: nowrap;
+}
+</style>
+"""
+
+_LIST_WIDTHS = [3, 2, 2, 2, 3, 2, 1.4]
+_LIST_HEADERS = ["Practice", "City", "Owner", "Stage", "Next action", "Due date", ""]
+
+
 def _render_list() -> None:
     left, right = st.columns([5, 1], vertical_alignment="center")
     left.title("Accounts")
@@ -219,17 +247,25 @@ def _render_list() -> None:
         accounts.sort(key=lambda a: PIPELINE_STAGES.index(a["pipeline_stage"]))
 
     st.caption(f"{len(accounts)} accounts")
-    for acct in accounts:
-        cols = st.columns([3, 2, 2, 2, 3, 2, 1], vertical_alignment="center")
-        cols[0].markdown(f"**{acct['practice_name']}**")
-        cols[1].write(acct.get("city") or "—")
-        cols[2].write(_user_name.get(acct.get("kairos_owner_id"), "—"))
-        cols[3].write(acct.get("pipeline_stage"))
-        cols[4].write(acct.get("next_action") or "—")
-        cols[5].write(str(acct.get("next_action_due_date") or "—"))
-        if cols[6].button("Open", key=f"open_{acct['id']}"):
-            st.session_state["selected_account_id"] = acct["id"]
-            st.rerun()
+    st.markdown(_LIST_CSS, unsafe_allow_html=True)
+    with st.container(key="accounts_header"):
+        cols = st.columns(_LIST_WIDTHS, vertical_alignment="center")
+        for col, label in zip(cols, _LIST_HEADERS):
+            if label:
+                col.markdown(f"**{label}**")
+    for i, acct in enumerate(accounts):
+        parity = "even" if i % 2 == 0 else "odd"
+        with st.container(key=f"accounts_row_{parity}_{acct['id']}"):
+            cols = st.columns(_LIST_WIDTHS, vertical_alignment="center")
+            cols[0].markdown(f"**{acct['practice_name']}**")
+            cols[1].write(acct.get("city") or "—")
+            cols[2].write(_user_name.get(acct.get("kairos_owner_id"), "—"))
+            cols[3].write(acct.get("pipeline_stage"))
+            cols[4].write(acct.get("next_action") or "—")
+            cols[5].write(str(acct.get("next_action_due_date") or "—"))
+            if cols[6].button("Open", key=f"open_{acct['id']}", use_container_width=True):
+                st.session_state["selected_account_id"] = acct["id"]
+                st.rerun()
 
 
 def _render_detail(account_id: int) -> None:
