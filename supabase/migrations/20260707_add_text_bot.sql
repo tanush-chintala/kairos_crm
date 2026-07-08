@@ -15,7 +15,9 @@ create table bot_messages (
 create index bot_messages_user_idx on bot_messages (user_id, created_at desc);
 
 -- Yajat is not in the seeded users; the bot needs a users row per texter.
-insert into users (name) values ('Yajat');
+insert into users (name)
+select 'Yajat'
+where not exists (select 1 from users where name = 'Yajat');
 
 -- The bot identifies who is texting by this number; anyone not listed is
 -- ignored. Fill in each person's real cell in E.164 before running.
