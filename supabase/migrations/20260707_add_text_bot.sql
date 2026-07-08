@@ -14,9 +14,13 @@ create table bot_messages (
 
 create index bot_messages_user_idx on bot_messages (user_id, created_at desc);
 
+-- Yajat is not in the seeded users; the bot needs a users row per texter.
+insert into users (name) values ('Yajat');
+
 -- The bot identifies who is texting by this number; anyone not listed is
 -- ignored. Fill in each person's real cell in E.164 before running.
 -- update users set phone = '+1XXXXXXXXXX' where name = 'Tanush';
 -- update users set phone = '+1XXXXXXXXXX' where name = 'Aditya';
 -- update users set phone = '+1XXXXXXXXXX' where name = 'Sanjana';
 -- update users set phone = '+1XXXXXXXXXX' where name = 'Adhira';
+-- update users set phone = '+1XXXXXXXXXX' where name = 'Yajat';
