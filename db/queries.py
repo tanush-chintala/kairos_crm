@@ -44,7 +44,7 @@ def list_accounts(
     search: str | None = None,
 ) -> list[dict]:
     q = get_client().table("account_overview").select("*")
-    if owner_id:
+    if owner_id is not None:
         q = q.eq("kairos_owner_id", owner_id)
     if stage:
         q = q.eq("pipeline_stage", stage)

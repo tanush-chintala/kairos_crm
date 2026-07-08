@@ -164,6 +164,20 @@ _LIST_HEADERS = ["Practice", "City", "Owner", "Stage", "Next action", "Due date"
 
 
 def _render_list() -> None:
+    if "filters_persist" not in st.session_state:
+        st.session_state["filters_persist"] = {
+            "search": "",
+            "owner": None,
+            "stage": None,
+            "channel": None,
+            "city": "",
+            "due_today_only": False,
+            "overdue_only": False,
+            "no_activity": False,
+            "stale_days": STALE_DAYS,
+            "sort_by": "Practice name",
+        }
+
     left, right = st.columns([5, 1], vertical_alignment="center")
     left.title("Accounts")
     if right.button("Refresh", icon=":material/refresh:", use_container_width=True):
@@ -195,26 +209,73 @@ def _render_list() -> None:
 
     with st.expander("Filters and search", icon=":material/filter_list:", expanded=True):
         f1, f2, f3, f4, f5 = st.columns(5)
-        search = f1.text_input("Search practice name")
+        search = f1.text_input(
+            "Search practice name",
+            value=st.session_state["filters_persist"]["search"]
+        )
+        st.session_state["filters_persist"]["search"] = search
+
+        owner_options = [None] + [u["id"] for u in _users_all]
+        owner_default = st.session_state["filters_persist"]["owner"]
+        owner_index = owner_options.index(owner_default) if owner_default in owner_options else 0
         owner = f2.selectbox(
-            "Kairos owner", [None] + [u["id"] for u in _users_all],
+            "Kairos owner", owner_options,
+            index=owner_index,
             format_func=lambda i: _user_name.get(i, "All") if i else "All",
         )
-        stage = f3.selectbox("Pipeline stage", [None] + PIPELINE_STAGES, format_func=lambda s: s or "All")
+        st.session_state["filters_persist"]["owner"] = owner
+
+        stage_options = [None] + PIPELINE_STAGES
+        stage_default = st.session_state["filters_persist"]["stage"]
+        stage_index = stage_options.index(stage_default) if stage_default in stage_options else 0
+        stage = f3.selectbox(
+            "Pipeline stage", stage_options,
+            index=stage_index,
+            format_func=lambda s: s or "All",
+        )
+        st.session_state["filters_persist"]["stage"] = stage
+
+        channel_options = [None] + [c["id"] for c in _channels_all]
+        channel_default = st.session_state["filters_persist"]["channel"]
+        channel_index = channel_options.index(channel_default) if channel_default in channel_options else 0
         channel = f4.selectbox(
-            "Channel type", [None] + [c["id"] for c in _channels_all],
+            "Channel type", channel_options,
+            index=channel_index,
             format_func=lambda i: _channel_name.get(i, "All") if i else "All",
         )
-        city = f5.text_input("City")
-        g1, g2, g3, g4 = st.columns([1, 1, 2, 2])
-        due_today_only = g1.checkbox("Due today")
-        overdue_only = g2.checkbox("Overdue")
-        no_activity = g3.checkbox("No activity in X+ days")
-        stale_days = g4.number_input("X days", min_value=1, value=STALE_DAYS, disabled=not no_activity)
-        sort_by = st.selectbox(
-            "Sort by",
-            ["Practice name", "Due date", "Last action (oldest first)", "Created (newest first)", "Stage"],
+        st.session_state["filters_persist"]["channel"] = channel
+
+        city = f5.text_input(
+            "City",
+            value=st.session_state["filters_persist"]["city"]
         )
+        st.session_state["filters_persist"]["city"] = city
+
+        g1, g2, g3, g4 = st.columns([1, 1, 2, 2])
+        due_today_only = g1.checkbox("Due today", value=st.session_state["filters_persist"]["due_today_only"])
+        st.session_state["filters_persist"]["due_today_only"] = due_today_only
+
+        overdue_only = g2.checkbox("Overdue", value=st.session_state["filters_persist"]["overdue_only"])
+        st.session_state["filters_persist"]["overdue_only"] = overdue_only
+
+        no_activity = g3.checkbox("No activity in X+ days", value=st.session_state["filters_persist"]["no_activity"])
+        st.session_state["filters_persist"]["no_activity"] = no_activity
+
+        stale_days = g4.number_input(
+            "X days", min_value=1,
+            value=int(st.session_state["filters_persist"]["stale_days"]),
+            disabled=not no_activity
+        )
+        st.session_state["filters_persist"]["stale_days"] = stale_days
+
+        sort_by_options = ["Practice name", "Due date", "Last action (oldest first)", "Created (newest first)", "Stage"]
+        sort_by_default = st.session_state["filters_persist"]["sort_by"]
+        sort_by_index = sort_by_options.index(sort_by_default) if sort_by_default in sort_by_options else 0
+        sort_by = st.selectbox(
+            "Sort by", sort_by_options,
+            index=sort_by_index
+        )
+        st.session_state["filters_persist"]["sort_by"] = sort_by
 
     accounts = queries.list_accounts(
         owner_id=owner, stage=stage, channel_id=channel,
