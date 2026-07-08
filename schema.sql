@@ -4,7 +4,10 @@
 create table users (
     id bigint generated always as identity primary key,
     name text not null,
-    active boolean not null default true
+    active boolean not null default true,
+    -- E.164, e.g. +13125550100. Identity for the SendBlue text bot: inbound
+    -- texts are matched against this and unknown numbers are ignored.
+    phone text
 );
 
 create table channel_types (
@@ -78,6 +81,18 @@ create table email_templates (
     body text,
     notes text
 );
+
+-- Rolling conversation history for the SendBlue text bot (supabase/functions/
+-- sendblue-bot). Only user text and final bot replies are stored, not tool calls.
+create table bot_messages (
+    id bigint generated always as identity primary key,
+    user_id bigint not null references users(id) on delete cascade,
+    role text not null check (role in ('user', 'model')),
+    content text not null,
+    created_at timestamptz not null default now()
+);
+
+create index bot_messages_user_idx on bot_messages (user_id, created_at desc);
 
 create index accounts_stage_idx on accounts (pipeline_stage);
 create index accounts_due_idx on accounts (next_action_due_date);
