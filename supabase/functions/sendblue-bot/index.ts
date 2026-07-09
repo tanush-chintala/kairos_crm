@@ -386,6 +386,7 @@ async function geminiRequest(model: string, sys: string, contents: Content[]) {
         system_instruction: { parts: [{ text: sys }] },
         contents,
         tools: [{ function_declarations: TOOL_DECLARATIONS }],
+        generationConfig: { temperature: 0.2, thinkingConfig: { thinkingBudget: 0 } },
       }),
     },
   );
@@ -432,17 +433,19 @@ async function runAgent(
       return { text: "Sorry, I did not get a response. Try rephrasing.", staged };
     }
     contents.push({ role: "model", parts });
-    const responses = [];
-    for (const c of calls) {
-      const name = c.functionCall.name;
-      const args = c.functionCall.args ?? {};
-      const result = (await execTool(name, args, userId)) as ToolArgs;
-      if (WRITE_TOOLS.has(name) && result?.status === "needs_confirmation") {
-        const entry = { name, args };
-        if (!staged.some((s) => JSON.stringify(s) === JSON.stringify(entry))) staged.push(entry);
-      }
-      responses.push({ functionResponse: { name, response: { result } } });
-    }
+    const responses = await Promise.all(
+      // deno-lint-ignore no-explicit-any
+      calls.map(async (c: any) => {
+        const name = c.functionCall.name;
+        const args = c.functionCall.args ?? {};
+        const result = (await execTool(name, args, userId)) as ToolArgs;
+        if (WRITE_TOOLS.has(name) && result?.status === "needs_confirmation") {
+          const entry = { name, args };
+          if (!staged.some((s) => JSON.stringify(s) === JSON.stringify(entry))) staged.push(entry);
+        }
+        return { functionResponse: { name, response: { result } } };
+      }),
+    );
     contents.push({ role: "user", parts: responses });
   }
   return { text: "Sorry, that request took too many steps. Try something more specific.", staged };
@@ -533,13 +536,13 @@ Deno.serve(async (req) => {
   const sender = user;
 
   async function respond(reply: string): Promise<Response> {
-    await saveExchange(sender.id, content, reply);
     if (debug) {
+      await saveExchange(sender.id, content, reply);
       return new Response(JSON.stringify({ user: sender.name, reply }), {
         headers: { "Content-Type": "application/json" },
       });
     }
-    await sendText(fromNumber, reply, lineNumber);
+    await Promise.all([sendText(fromNumber, reply, lineNumber), saveExchange(sender.id, content, reply)]);
     return new Response("ok");
   }
 
