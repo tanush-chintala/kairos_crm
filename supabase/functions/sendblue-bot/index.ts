@@ -559,7 +559,28 @@ Deno.serve(async (req) => {
 
   const contents = await loadHistory(sender.id);
   contents.push({ role: "user", parts: [{ text: content }] });
-  const { text: reply, staged } = await runAgent(sender.id, sender.name, contents);
+  let { text: reply, staged } = await runAgent(sender.id, sender.name, contents);
+
+  // The model sometimes writes proposal text without making the tool call, so
+  // there is nothing staged and the user's yes dead-ends. Detect that and force
+  // one retry turn that must produce the staged call.
+  if (!staged.length && /reply yes to save/i.test(reply)) {
+    contents.push({ role: "model", parts: [{ text: reply }] });
+    contents.push({
+      role: "user",
+      parts: [{
+        text: "SYSTEM: Your proposal was not staged because you did not call the tool. Call log_activity or update_account now with exactly the values you proposed, then repeat the proposal.",
+      }],
+    });
+    const retry = await runAgent(sender.id, sender.name, contents);
+    if (retry.staged.length) {
+      reply = retry.text;
+      staged = retry.staged;
+    } else {
+      reply = "Something went wrong staging that change - please resend the request.";
+    }
+  }
+
   if (staged.length) await savePending(sender.id, staged);
   return await respond(reply);
 });
