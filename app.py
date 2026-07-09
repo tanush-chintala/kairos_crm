@@ -52,6 +52,8 @@ with st.sidebar:
     st.markdown(f"Acting as: **{st.session_state['current_user']['name']}**")
     if st.button("Switch user", icon=":material/swap_horiz:", use_container_width=True):
         st.session_state["current_user"] = None
+        # Filter defaults derive from the acting user, so they must reinitialize
+        st.session_state.pop("filters_persist", None)
         st.rerun()
     st.divider()
 

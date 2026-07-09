@@ -167,7 +167,7 @@ def _render_list() -> None:
     if "filters_persist" not in st.session_state:
         st.session_state["filters_persist"] = {
             "search": "",
-            "owner": None,
+            "owner": st.session_state["current_user"]["id"],
             "stage": None,
             "channel": None,
             "city": "",
