@@ -317,6 +317,7 @@ async function geminiRequest(model: string, sys: string, contents: Content[]) {
 async function runAgent(userId: number, userName: string, contents: Content[]): Promise<string> {
   const sys = systemPrompt(userName);
   let model = GEMINI_MODEL;
+  let emptyRetries = 0;
   for (let step = 0; step < 8; step++) {
     const resp = await geminiRequest(model, sys, contents);
     if (!resp.ok) {
@@ -334,8 +335,15 @@ async function runAgent(userId: number, userName: string, contents: Content[]): 
     const calls = parts.filter((p: any) => p.functionCall);
     if (!calls.length) {
       // deno-lint-ignore no-explicit-any
-      const text = parts.map((p: any) => p.text ?? "").join("").trim();
-      return text || "Sorry, I did not get a response. Try rephrasing.";
+      const text = parts.map((p: any) => (p.thought ? "" : p.text ?? "")).join("").trim();
+      if (text) return text;
+      // Gemini intermittently returns a candidate with no text and no tool
+      // call; retry, then switch models before giving up.
+      console.error(`Empty Gemini response (finishReason=${data.candidates?.[0]?.finishReason ?? "none"})`);
+      emptyRetries += 1;
+      if (emptyRetries === 2 && model !== GEMINI_FALLBACK_MODEL) model = GEMINI_FALLBACK_MODEL;
+      if (emptyRetries <= 3) continue;
+      return "Sorry, I did not get a response. Try rephrasing.";
     }
     contents.push({ role: "model", parts });
     const responses = [];
