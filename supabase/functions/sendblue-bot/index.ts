@@ -58,6 +58,10 @@ function chicagoToday(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 }
 
+function chicagoWeekday(): string {
+  return new Date().toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "long" });
+}
+
 function phoneDigits(raw: string): string {
   return raw.replace(/\D/g, "").slice(-10);
 }
@@ -151,7 +155,14 @@ const TOOL_DECLARATIONS = [
 // deno-lint-ignore no-explicit-any
 type ToolArgs = Record<string, any>;
 
-async function execTool(name: string, args: ToolArgs, userId: number): Promise<unknown> {
+type StagedCall = { name: string; args: ToolArgs };
+
+const WRITE_TOOLS = new Set(["log_activity", "update_account"]);
+
+// Writes are gated in code, not by the model: without commit the tool only
+// validates and stages, and the actual insert/update happens in
+// executePending after the user texts an affirmative.
+async function execTool(name: string, args: ToolArgs, userId: number, commit = false): Promise<unknown> {
   try {
     switch (name) {
       case "get_due_today": {
@@ -230,6 +241,12 @@ async function execTool(name: string, args: ToolArgs, userId: number): Promise<u
         if (args.next_action_due_date && !isDate(args.next_action_due_date)) {
           return { error: "next_action_due_date must be YYYY-MM-DD" };
         }
+        if (!commit) {
+          return {
+            status: "needs_confirmation",
+            note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save.",
+          };
+        }
         const row: ToolArgs = {
           account_id: Number(args.account_id),
           date: isDate(args.date) ? args.date : chicagoToday(),
@@ -268,6 +285,12 @@ async function execTool(name: string, args: ToolArgs, userId: number): Promise<u
           return { error: "next_action_due_date must be YYYY-MM-DD" };
         }
         if (!Object.keys(fields).length) return { error: "No editable fields provided" };
+        if (!commit) {
+          return {
+            status: "needs_confirmation",
+            note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save.",
+          };
+        }
         const { error } = await supabase.from("accounts").update(fields).eq("id", Number(args.account_id));
         return error ? { error: error.message } : { ok: true, updated: fields };
       }
@@ -279,16 +302,71 @@ async function execTool(name: string, args: ToolArgs, userId: number): Promise<u
   }
 }
 
+const AFFIRMATIVE_RE =
+  /^\s*(y|ya|yes+|yep|yeah|yup|ok|okay|k|sure|confirm|confirmed|go ahead|sounds good|do it|save( it)?|yes please)[\s!.?]*$/i;
+
+const PENDING_TTL_MS = 60 * 60 * 1000;
+
+async function loadPending(userId: number): Promise<StagedCall[]> {
+  const { data } = await supabase
+    .from("bot_pending_writes")
+    .select("calls, created_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!data || Date.now() - new Date(data.created_at).getTime() > PENDING_TTL_MS) return [];
+  return data.calls as StagedCall[];
+}
+
+async function savePending(userId: number, calls: StagedCall[]) {
+  await supabase
+    .from("bot_pending_writes")
+    .upsert({ user_id: userId, calls, created_at: new Date().toISOString() });
+}
+
+async function clearPending(userId: number) {
+  await supabase.from("bot_pending_writes").delete().eq("user_id", userId);
+}
+
+async function accountName(id: number): Promise<string> {
+  const { data } = await supabase.from("accounts").select("practice_name").eq("id", id).maybeSingle();
+  return data?.practice_name ?? `account ${id}`;
+}
+
+async function executePending(userId: number, calls: StagedCall[]): Promise<string> {
+  const lines: string[] = [];
+  for (const call of calls) {
+    const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
+    const name = await accountName(Number(call.args.account_id));
+    if (result?.error) {
+      lines.push(`Could not save the change on ${name}: ${result.error}`);
+    } else if (call.name === "log_activity") {
+      let line = `Saved. ${call.args.activity_type} logged on ${name}`;
+      if (call.args.next_action) {
+        line += `; next action "${call.args.next_action}"`;
+        if (call.args.next_action_due_date) line += ` due ${call.args.next_action_due_date}`;
+      }
+      lines.push(line + ".");
+    } else {
+      const fields = Object.entries(call.args)
+        .filter(([k]) => k !== "account_id")
+        .map(([k, v]) => `${k.replaceAll("_", " ")}: ${v}`)
+        .join(", ");
+      lines.push(`Saved. Updated ${name} - ${fields}.`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function systemPrompt(userName: string): string {
   return [
     `You are the Kairos CRM assistant, texting with ${userName}, a member of the Kairos dental-AI sales team.`,
-    `Today is ${chicagoToday()} (America/Chicago). All dates use YYYY-MM-DD.`,
+    `Today is ${chicagoWeekday()}, ${chicagoToday()} (America/Chicago). All dates use YYYY-MM-DD. Resolve relative days like 'Friday' or 'tomorrow' from this exact date and double-check the weekday arithmetic.`,
     "You answer questions about their sales pipeline and make edits, using the provided tools. Never invent accounts or data; if a tool returns nothing, say so.",
     "Always resolve an account name with find_account before reading details or editing. If multiple accounts plausibly match, list them briefly and ask which one instead of guessing.",
     "When the user reports something that happened (a call, a visit, an email, a demo), log it with log_activity and include any new next action there. Use update_account only for direct field edits like stage or contact info.",
-    "CONFIRM BEFORE WRITING, always. Never call log_activity or update_account on the message that requests the change. First reply with a short proposal that names the account and states exactly what you will save, then wait. Example: 'Just to confirm - on Feel Good Dentistry I'll log a phone call under your name with summary \"Spoke with the office manager; interested in a demo\" and set the next action to \"Tanush to review pricing options\" due 2026-07-10. Reply yes to save.' Only execute the write after the user clearly agrees (yes, yep, go ahead, sounds good) to a proposal you made earlier in this conversation. Agreement is case-insensitive and punctuation-insensitive: YES, Yes, yes, Y, yeah, YEP, ok all count the same. If they say no or correct something, revise the proposal and confirm again.",
+    "Writes are two-step and the system enforces it. When the user requests a change, call log_activity or update_account right away with professionalized field values - the system stages the change instead of saving it and returns needs_confirmation. Then reply with one short proposal naming the account and quoting exactly what will be saved, ending with 'Reply yes to save.' Example: 'On Feel Good Dentistry I'll log a phone call under your name with summary \"Spoke with the office manager; interested in a demo\" and set the next action to \"Tanush to review pricing options\" due 2026-07-10. Reply yes to save.'",
+    "You cannot save anything yourself. The system saves the staged change only when the user replies with an affirmative, and it sends its own saved-confirmation text. Never claim that something was logged, saved, or updated. If the user replies with corrections instead of yes, call the tool again with corrected values and propose again.",
     "Professionalize everything you save. The team texts in quick casual language, all caps, slang, shorthand - never store their words verbatim. Rewrite summaries and next actions into concise, dashboard-ready CRM language: proper capitalization, full words, neutral professional tone, third person, facts preserved exactly. Example: a text of 'CALLED FEEL GOOD THEY WANT TANUSH TO LOOK IT OVER' becomes summary 'Phone call with the practice' and next action 'Tanush to review the account'. Show the professionalized wording in your confirmation proposal so the user approves the final text.",
-    "After an edit, confirm in one short sentence exactly what was saved.",
     `Pipeline stages: ${PIPELINE_STAGES.join(", ")}.`,
     `Activity types: ${ACTIVITY_TYPES.join(", ")}.`,
     "You are texting: reply in plain conversational text. No markdown, no asterisks, no emojis, no headers. Keep replies compact - short lines, one item per line for lists. Round nothing; quote fields as stored.",
@@ -314,10 +392,15 @@ async function geminiRequest(model: string, sys: string, contents: Content[]) {
   return resp;
 }
 
-async function runAgent(userId: number, userName: string, contents: Content[]): Promise<string> {
+async function runAgent(
+  userId: number,
+  userName: string,
+  contents: Content[],
+): Promise<{ text: string; staged: StagedCall[] }> {
   const sys = systemPrompt(userName);
   let model = GEMINI_MODEL;
   let emptyRetries = 0;
+  const staged: StagedCall[] = [];
   for (let step = 0; step < 8; step++) {
     const resp = await geminiRequest(model, sys, contents);
     if (!resp.ok) {
@@ -327,7 +410,10 @@ async function runAgent(userId: number, userName: string, contents: Content[]): 
       }
       const detail = await resp.text();
       console.error(`Gemini error ${resp.status}: ${detail.slice(0, 500)}`);
-      return "Sorry, the assistant is unavailable right now (model error). Try again in a minute.";
+      return {
+        text: "Sorry, the assistant is unavailable right now (model error). Try again in a minute.",
+        staged: [],
+      };
     }
     const data = await resp.json();
     const parts = data.candidates?.[0]?.content?.parts ?? [];
@@ -336,24 +422,30 @@ async function runAgent(userId: number, userName: string, contents: Content[]): 
     if (!calls.length) {
       // deno-lint-ignore no-explicit-any
       const text = parts.map((p: any) => (p.thought ? "" : p.text ?? "")).join("").trim();
-      if (text) return text;
+      if (text) return { text, staged };
       // Gemini intermittently returns a candidate with no text and no tool
       // call; retry, then switch models before giving up.
       console.error(`Empty Gemini response (finishReason=${data.candidates?.[0]?.finishReason ?? "none"})`);
       emptyRetries += 1;
       if (emptyRetries === 2 && model !== GEMINI_FALLBACK_MODEL) model = GEMINI_FALLBACK_MODEL;
       if (emptyRetries <= 3) continue;
-      return "Sorry, I did not get a response. Try rephrasing.";
+      return { text: "Sorry, I did not get a response. Try rephrasing.", staged };
     }
     contents.push({ role: "model", parts });
     const responses = [];
     for (const c of calls) {
-      const result = await execTool(c.functionCall.name, c.functionCall.args ?? {}, userId);
-      responses.push({ functionResponse: { name: c.functionCall.name, response: { result } } });
+      const name = c.functionCall.name;
+      const args = c.functionCall.args ?? {};
+      const result = (await execTool(name, args, userId)) as ToolArgs;
+      if (WRITE_TOOLS.has(name) && result?.status === "needs_confirmation") {
+        const entry = { name, args };
+        if (!staged.some((s) => JSON.stringify(s) === JSON.stringify(entry))) staged.push(entry);
+      }
+      responses.push({ functionResponse: { name, response: { result } } });
     }
     contents.push({ role: "user", parts: responses });
   }
-  return "Sorry, that request took too many steps. Try something more specific.";
+  return { text: "Sorry, that request took too many steps. Try something more specific.", staged };
 }
 
 function sendblueHeaders(): HeadersInit {
@@ -390,12 +482,14 @@ function sendTypingIndicator(number: string) {
 
 async function loadHistory(userId: number): Promise<Content[]> {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  // Order by id, not created_at: the user/model pair is inserted in one
+  // statement and can share a timestamp, which scrambles the turn order.
   const { data } = await supabase
     .from("bot_messages")
     .select("role, content")
     .eq("user_id", userId)
     .gte("created_at", since)
-    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(12);
   return (data ?? []).reverse().map((m) => ({ role: m.role, parts: [{ text: m.content }] }));
 }
@@ -434,18 +528,35 @@ Deno.serve(async (req) => {
   }
 
   sendTypingIndicator(fromNumber);
+  const debug = url.searchParams.get("debug") === "1";
+  const lineNumber = String(payload.to_number ?? "");
+  const sender = user;
 
-  const contents = await loadHistory(user.id);
-  contents.push({ role: "user", parts: [{ text: content }] });
-  const reply = await runAgent(user.id, user.name, contents);
-  await saveExchange(user.id, content, reply);
-
-  if (url.searchParams.get("debug") === "1") {
-    return new Response(JSON.stringify({ user: user.name, reply }), {
-      headers: { "Content-Type": "application/json" },
-    });
+  async function respond(reply: string): Promise<Response> {
+    await saveExchange(sender.id, content, reply);
+    if (debug) {
+      return new Response(JSON.stringify({ user: sender.name, reply }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    await sendText(fromNumber, reply, lineNumber);
+    return new Response("ok");
   }
 
-  await sendText(fromNumber, reply, String(payload.to_number ?? ""));
-  return new Response("ok");
+  // The confirmation gate lives here, not in the model: an affirmative reply
+  // executes the staged writes deterministically; anything else discards them
+  // and falls through to the model, which can re-propose with corrections.
+  const pending = await loadPending(sender.id);
+  if (pending.length && AFFIRMATIVE_RE.test(content)) {
+    const reply = await executePending(sender.id, pending);
+    await clearPending(sender.id);
+    return await respond(reply);
+  }
+  if (pending.length) await clearPending(sender.id);
+
+  const contents = await loadHistory(sender.id);
+  contents.push({ role: "user", parts: [{ text: content }] });
+  const { text: reply, staged } = await runAgent(sender.id, sender.name, contents);
+  if (staged.length) await savePending(sender.id, staged);
+  return await respond(reply);
 });

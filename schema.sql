@@ -94,6 +94,14 @@ create table bot_messages (
 
 create index bot_messages_user_idx on bot_messages (user_id, created_at desc);
 
+-- Staged bot edits awaiting the user's yes-by-text. The edge function, not the
+-- model, decides when these execute (code-enforced confirmation gate).
+create table bot_pending_writes (
+    user_id bigint primary key references users(id) on delete cascade,
+    calls jsonb not null,
+    created_at timestamptz not null default now()
+);
+
 create index accounts_stage_idx on accounts (pipeline_stage);
 create index accounts_due_idx on accounts (next_action_due_date);
 create index activities_account_idx on activities (account_id, date desc);

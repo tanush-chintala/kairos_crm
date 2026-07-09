@@ -14,6 +14,12 @@ create table bot_messages (
 
 create index bot_messages_user_idx on bot_messages (user_id, created_at desc);
 
+create table bot_pending_writes (
+    user_id bigint primary key references users(id) on delete cascade,
+    calls jsonb not null,
+    created_at timestamptz not null default now()
+);
+
 -- Yajat is not in the seeded users; the bot needs a users row per texter.
 insert into users (name)
 select 'Yajat'
