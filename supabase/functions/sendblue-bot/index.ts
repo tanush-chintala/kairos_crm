@@ -474,12 +474,12 @@ async function sendText(number: string, content: string, fromNumber: string) {
   if (!resp.ok) console.error(`SendBlue send failed ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
 }
 
-function sendTypingIndicator(number: string) {
+function sendTypingIndicator(number: string, fromNumber: string) {
   if (!SENDBLUE_API_KEY_ID) return;
   fetch("https://api.sendblue.com/api/send-typing-indicator", {
     method: "POST",
     headers: sendblueHeaders(),
-    body: JSON.stringify({ number }),
+    body: JSON.stringify({ number, from_number: fromNumber || SENDBLUE_FROM_NUMBER }),
   }).catch(() => {});
 }
 
@@ -530,9 +530,9 @@ Deno.serve(async (req) => {
     return new Response("ignored unknown sender");
   }
 
-  sendTypingIndicator(fromNumber);
   const debug = url.searchParams.get("debug") === "1";
   const lineNumber = String(payload.to_number ?? "");
+  sendTypingIndicator(fromNumber, lineNumber);
   const sender = user;
 
   async function respond(reply: string): Promise<Response> {
