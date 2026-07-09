@@ -354,9 +354,13 @@ function sendblueHeaders(): HeadersInit {
   };
 }
 
-async function sendText(number: string, content: string) {
+async function sendText(number: string, content: string, fromNumber: string) {
   const body: Record<string, unknown> = { number, content };
-  if (SENDBLUE_FROM_NUMBER) body.from_number = SENDBLUE_FROM_NUMBER;
+  // SendBlue rejects sends without from_number on this account. The inbound
+  // payload's to_number is the line the user texted, so replying from it is
+  // always correct; the env var is only a fallback.
+  const from = fromNumber || SENDBLUE_FROM_NUMBER;
+  if (from) body.from_number = from;
   const resp = await fetch("https://api.sendblue.com/api/send-message", {
     method: "POST",
     headers: sendblueHeaders(),
@@ -432,6 +436,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  await sendText(fromNumber, reply);
+  await sendText(fromNumber, reply, String(payload.to_number ?? ""));
   return new Response("ok");
 });
