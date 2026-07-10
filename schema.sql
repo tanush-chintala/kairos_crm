@@ -63,6 +63,9 @@ create table contacts (
     phone text
 );
 
+-- is_system marks auto-generated change records (details edited, contact
+-- added, demo updated, ...) so the UI can de-emphasize them and derived state
+-- (current state, last action, staleness) can ignore them.
 create table activities (
     id bigint generated always as identity primary key,
     account_id bigint not null references accounts(id) on delete cascade,
@@ -72,6 +75,7 @@ create table activities (
     summary text,
     next_action text,
     next_action_due_date date,
+    is_system boolean not null default false,
     created_at timestamptz not null default now()
 );
 
@@ -162,12 +166,13 @@ create view account_overview as
 select
     a.*,
     coalesce(la.last_date, a.created_at::date) as last_action_date,
-    la.last_summary as latest_activity_summary
+    la.last_summary as latest_activity_summary,
+    la.last_type as latest_activity_type
 from accounts a
 left join lateral (
-    select date as last_date, summary as last_summary
+    select date as last_date, summary as last_summary, activity_type as last_type
     from activities
-    where account_id = a.id
+    where account_id = a.id and not is_system
     order by date desc, id desc
     limit 1
 ) la on true;

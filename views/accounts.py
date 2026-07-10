@@ -56,7 +56,8 @@ def _nullable_select(label: str, values: list[str], key: str, current=None):
 
 
 def _account_form(form_key: str, defaults: dict) -> dict | None:
-    """Shared add/edit account form. Returns the payload on submit, else None."""
+    """Shared add/edit account form: reference facts entered once. Key people
+    live on the Contacts tab; next action is set from the Activity Log only."""
     with st.form(form_key):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -64,13 +65,14 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
             practice_email = st.text_input("Practice email", value=defaults.get("practice_email") or "")
             practice_phone = st.text_input("Practice phone", value=defaults.get("practice_phone") or "")
             website = st.text_input("Website", value=defaults.get("website") or "")
+        with c2:
             city = st.text_input("City", value=defaults.get("city") or "")
             state = st.text_input("State", value=defaults.get("state") or "")
             pms = st.text_input("PMS", value=defaults.get("pms") or "")
-        with c2:
+            source_detail = st.text_input("Source detail", value=defaults.get("source_detail") or "")
+        with c3:
             owner_id = _owner_select("Kairos owner", f"{form_key}_owner", defaults.get("kairos_owner_id"))
             channel_id = _channel_select("Channel type", f"{form_key}_channel", defaults.get("channel_type_id"))
-            source_detail = st.text_input("Source detail", value=defaults.get("source_detail") or "")
             stage = st.selectbox(
                 "Pipeline stage", PIPELINE_STAGES,
                 index=PIPELINE_STAGES.index(defaults.get("pipeline_stage") or "New Lead"),
@@ -82,33 +84,6 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
             competitor_tool = _nullable_select(
                 "Current tool", COMPETITOR_TOOLS, f"{form_key}_tool", defaults.get("competitor_tool")
             )
-        with c3:
-            next_action = st.text_input("Next action", value=defaults.get("next_action") or "")
-            next_action_due = st.date_input(
-                "Next action due date", value=parse_date(defaults.get("next_action_due_date")),
-                key=f"{form_key}_due",
-            )
-            dm_reached = st.selectbox(
-                "Decision maker reached", DECISION_MAKER_REACHED,
-                index=DECISION_MAKER_REACHED.index(defaults.get("decision_maker_reached") or "Unknown"),
-                key=f"{form_key}_dm",
-            )
-        b1, b2, b3 = st.columns(3)
-        best_contact = b1.text_input("Best contact", value=defaults.get("best_contact") or "")
-        best_contact_email = b2.text_input(
-            "Best contact email", value=defaults.get("best_contact_email") or ""
-        )
-        best_contact_phone = b3.text_input(
-            "Best contact phone", value=defaults.get("best_contact_phone") or ""
-        )
-        d1, d2, d3 = st.columns(3)
-        decision_maker = d1.text_input("Decision maker", value=defaults.get("decision_maker") or "")
-        decision_maker_email = d2.text_input(
-            "Decision maker email", value=defaults.get("decision_maker_email") or ""
-        )
-        decision_maker_phone = d3.text_input(
-            "Decision maker phone", value=defaults.get("decision_maker_phone") or ""
-        )
         initial_summary = st.text_area(
             "Initial encounter summary", value=defaults.get("initial_encounter_summary") or ""
         )
@@ -130,19 +105,31 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
         "source_detail": source_detail.strip() or None,
         "initial_encounter_summary": initial_summary.strip() or None,
         "pipeline_stage": stage,
-        "next_action": next_action.strip() or None,
-        "next_action_due_date": next_action_due.isoformat() if next_action_due else None,
         "lost_reason": lost_reason,
         "competitor_tool": competitor_tool,
         "pms": pms.strip() or None,
-        "best_contact": best_contact.strip() or None,
-        "best_contact_email": best_contact_email.strip() or None,
-        "best_contact_phone": best_contact_phone.strip() or None,
-        "decision_maker": decision_maker.strip() or None,
-        "decision_maker_email": decision_maker_email.strip() or None,
-        "decision_maker_phone": decision_maker_phone.strip() or None,
-        "decision_maker_reached": dm_reached,
     }
+
+
+def _log_system(account_id: int, activity_type: str, summary: str | None = None) -> None:
+    """Auto-generated change record: shows dimmed in the Activity Log and is
+    excluded from current state, last action, and staleness."""
+    queries.log_activity({
+        "account_id": account_id,
+        "date": central_today().isoformat(),
+        "kairos_owner_id": st.session_state["current_user"]["id"],
+        "activity_type": activity_type,
+        "summary": summary,
+        "is_system": True,
+    })
+
+
+def _changed_fields(before: dict, payload: dict) -> list[str]:
+    return [
+        k.replace("_", " ")
+        for k, v in payload.items()
+        if (before.get(k) or None) != (v or None)
+    ]
 
 
 def _show_matches(matches: list[dict]) -> None:
@@ -199,6 +186,10 @@ def _render_cadence_panel(account: dict) -> None:
                         "next_action": _cadence_step_action(first, 1, len(steps)),
                         "next_action_due_date": due.isoformat(),
                     })
+                    _log_system(
+                        account_id, "Cadence enrolled",
+                        next(c["name"] for c in active if c["id"] == pick),
+                    )
                     st.rerun()
             picked = next(c for c in active if c["id"] == pick)
             if picked.get("description"):
@@ -227,6 +218,9 @@ def _render_cadence_panel(account: dict) -> None:
                         "next_action": action,
                         "next_action_due_date": due.isoformat(),
                     })
+                    _log_system(
+                        account_id, "Follow-up scheduled", f"{action} (due {due.isoformat()})"
+                    )
                     st.rerun()
             return
 
@@ -269,12 +263,14 @@ def _render_cadence_panel(account: dict) -> None:
                     "next_action": _cadence_step_action(nxt, idx + 1, len(steps)),
                     "next_action_due_date": due.isoformat(),
                 })
+                _log_system(account_id, "Cadence step skipped", f"Step {idx} ({step['channel']})")
                 st.rerun()
         elif c1.button("Skip step (ends cadence)", icon=":material/skip_next:", key="cadence_skip", use_container_width=True):
             queries.update_account(account_id, {
                 "cadence_id": None, "cadence_step_order": None, "cadence_paused": False,
                 "next_action": None, "next_action_due_date": None,
             })
+            _log_system(account_id, "Cadence completed", cadence["name"])
             st.toast("Cadence complete. Consider moving this account to Nurture Later.")
             st.rerun()
         if account.get("cadence_paused"):
@@ -285,14 +281,17 @@ def _render_cadence_panel(account: dict) -> None:
                     "next_action": _cadence_step_action(step, idx, len(steps)),
                     "next_action_due_date": due.isoformat(),
                 })
+                _log_system(account_id, "Cadence resumed", cadence["name"])
                 st.rerun()
         elif c2.button("Pause", icon=":material/pause:", key="cadence_pause", use_container_width=True):
             queries.update_account(account_id, {"cadence_paused": True})
+            _log_system(account_id, "Cadence paused", cadence["name"])
             st.rerun()
         if c3.button("Exit cadence", icon=":material/stop:", key="cadence_exit", use_container_width=True):
             queries.update_account(account_id, {
                 "cadence_id": None, "cadence_step_order": None, "cadence_paused": False,
             })
+            _log_system(account_id, "Cadence exited", cadence["name"])
             st.rerun()
 
 
@@ -353,7 +352,8 @@ def _render_list() -> None:
                 st.session_state["pending_account"] = payload
                 st.session_state["pending_matches"] = matches
             else:
-                queries.create_account(payload)
+                created = queries.create_account(payload)
+                _log_system(created["id"], "Account created")
                 st.success(f"Added {payload['practice_name']}.")
 
         if st.session_state.get("pending_account"):
@@ -361,7 +361,8 @@ def _render_list() -> None:
             _show_matches(st.session_state["pending_matches"])
             c1, c2 = st.columns(2)
             if c1.button("Save anyway", icon=":material/warning:"):
-                queries.create_account(st.session_state.pop("pending_account"))
+                created = queries.create_account(st.session_state.pop("pending_account"))
+                _log_system(created["id"], "Account created")
                 st.session_state.pop("pending_matches", None)
                 st.rerun()
             if c2.button("Discard"):
@@ -515,19 +516,31 @@ def _render_detail(account_id: int) -> None:
         f"Channel: {_channel_name.get(account.get('channel_type_id'), '—')} | "
         f"Last action: {account.get('last_action_date') or '—'}"
     )
-    # "Current state" is the latest activity's summary, read-only — derived,
-    # never stored (spec 5.1).
-    st.info(
-        f"**Current state:** {account.get('latest_activity_summary') or 'No activity logged yet.'}"
-    )
+    # "Current state" is the latest real activity (system change records are
+    # excluded in the view), read-only — derived, never stored (spec 5.1).
+    if account.get("latest_activity_type"):
+        st.info(
+            f"**Latest activity ({account.get('last_action_date')}):** "
+            f"{account['latest_activity_type']}"
+            + (f" — {account['latest_activity_summary']}" if account.get("latest_activity_summary") else "")
+        )
+    else:
+        st.info("**Latest activity:** No activity logged yet.")
     _render_cadence_panel(account)
 
     details, contacts, activity, demos = st.tabs(["Details", "Contacts", "Activity Log", "Demos"])
 
     with details:
+        st.caption(
+            "Reference facts about the practice, entered once. Key people live on "
+            "the Contacts tab; the next action is set from the Activity Log."
+        )
         payload = _account_form("edit_account", account)
         if payload:
+            changed = _changed_fields(account, payload)
             queries.update_account(account_id, payload)
+            if changed:
+                _log_system(account_id, "Details updated", ", ".join(changed))
             st.success("Saved.")
             st.rerun()
         with st.expander("Delete account", icon=":material/delete:"):
@@ -539,6 +552,45 @@ def _render_detail(account_id: int) -> None:
                     st.rerun()
 
     with contacts:
+        with st.form("key_people"):
+            st.markdown("**Key people**")
+            b1, b2, b3 = st.columns(3)
+            best_contact = b1.text_input("Best contact", value=account.get("best_contact") or "")
+            best_contact_email = b2.text_input(
+                "Best contact email", value=account.get("best_contact_email") or ""
+            )
+            best_contact_phone = b3.text_input(
+                "Best contact phone", value=account.get("best_contact_phone") or ""
+            )
+            d1, d2, d3 = st.columns(3)
+            decision_maker = d1.text_input("Decision maker", value=account.get("decision_maker") or "")
+            decision_maker_email = d2.text_input(
+                "Decision maker email", value=account.get("decision_maker_email") or ""
+            )
+            decision_maker_phone = d3.text_input(
+                "Decision maker phone", value=account.get("decision_maker_phone") or ""
+            )
+            dm_reached = st.selectbox(
+                "Decision maker reached", DECISION_MAKER_REACHED,
+                index=DECISION_MAKER_REACHED.index(account.get("decision_maker_reached") or "Unknown"),
+            )
+            if st.form_submit_button("Save key people", icon=":material/save:"):
+                payload = {
+                    "best_contact": best_contact.strip() or None,
+                    "best_contact_email": best_contact_email.strip() or None,
+                    "best_contact_phone": best_contact_phone.strip() or None,
+                    "decision_maker": decision_maker.strip() or None,
+                    "decision_maker_email": decision_maker_email.strip() or None,
+                    "decision_maker_phone": decision_maker_phone.strip() or None,
+                    "decision_maker_reached": dm_reached,
+                }
+                changed = _changed_fields(account, payload)
+                queries.update_account(account_id, payload)
+                if changed:
+                    _log_system(account_id, "Key people updated", ", ".join(changed))
+                st.rerun()
+
+        st.divider()
         with st.form("add_contact", clear_on_submit=True):
             st.markdown("**Add contact**")
             c1, c2, c3, c4 = st.columns(4)
@@ -553,6 +605,7 @@ def _render_detail(account_id: int) -> None:
                         "role": role.strip() or None, "email": email.strip() or None,
                         "phone": phone.strip() or None,
                     })
+                    _log_system(account_id, "Contact added", name.strip())
                     st.rerun()
                 else:
                     st.error("Name is required.")
@@ -565,15 +618,23 @@ def _render_detail(account_id: int) -> None:
                     email = c3.text_input("Email", value=contact.get("email") or "")
                     phone = c4.text_input("Phone", value=contact.get("phone") or "")
                     if st.form_submit_button("Save"):
-                        queries.update_contact(contact["id"], {
+                        payload = {
                             "name": name.strip() or contact["name"],
                             "role": role.strip() or None,
                             "email": email.strip() or None,
                             "phone": phone.strip() or None,
-                        })
+                        }
+                        changed = _changed_fields(contact, payload)
+                        queries.update_contact(contact["id"], payload)
+                        if changed:
+                            _log_system(
+                                account_id, "Contact updated",
+                                f"{contact['name']}: {', '.join(changed)}",
+                            )
                         st.rerun()
                 if st.button("Delete contact", key=f"del_contact_{contact['id']}", icon=":material/delete:"):
                     queries.delete_contact(contact["id"])
+                    _log_system(account_id, "Contact removed", contact["name"])
                     st.rerun()
 
     with activity:
@@ -642,11 +703,24 @@ def _render_detail(account_id: int) -> None:
                 queries.log_activity(payload)
                 if account_update:
                     queries.update_account(account_id, account_update)
+                    if account_update.get("cadence_id", "keep") is None:
+                        _log_system(account_id, "Cadence completed")
                 st.rerun()
+        show_system = st.checkbox(
+            "Show detail change history (dimmed entries)", value=True, key="show_system_log"
+        )
         for entry in queries.list_activities(account_id):
+            if entry.get("is_system"):
+                if show_system:
+                    line = f"{entry['date']} — {entry['activity_type']}"
+                    if entry.get("summary"):
+                        line += f": {entry['summary']}"
+                    line += f" — {_user_name.get(entry.get('kairos_owner_id'), '—')}"
+                    st.caption(line)
+                continue
             st.markdown(
-                f"**{entry['date']}** — {entry['activity_type']} — "
-                f"{_user_name.get(entry.get('kairos_owner_id'), '—')}"
+                f":primary[**{entry['date']} — {entry['activity_type']} — "
+                f"{_user_name.get(entry.get('kairos_owner_id'), '—')}**]"
             )
             if entry.get("summary"):
                 st.write(entry["summary"])
@@ -678,6 +752,10 @@ def _render_detail(account_id: int) -> None:
                     "objections": objections.strip() or None,
                     "follow_up_required": follow_up.strip() or None,
                 })
+                _log_system(
+                    account_id, "Demo added",
+                    f"{demo_date.isoformat() if demo_date else 'no date'} ({status})",
+                )
                 st.rerun()
         for demo in queries.list_demos(account_id):
             with st.expander(f"{demo.get('demo_date') or 'No date'} — {demo['status']}"):
@@ -693,17 +771,22 @@ def _render_detail(account_id: int) -> None:
                     objections = c5.text_area("Objections", value=demo.get("objections") or "")
                     follow_up = c6.text_area("Follow-up required", value=demo.get("follow_up_required") or "")
                     if st.form_submit_button("Save"):
-                        queries.update_demo(demo["id"], {
+                        payload = {
                             "demo_date": demo_date.isoformat() if demo_date else None,
                             "status": status,
                             "attendees": attendees.strip() or None,
                             "pain_points": pain_points.strip() or None,
                             "objections": objections.strip() or None,
                             "follow_up_required": follow_up.strip() or None,
-                        })
+                        }
+                        changed = _changed_fields(demo, payload)
+                        queries.update_demo(demo["id"], payload)
+                        if changed:
+                            _log_system(account_id, "Demo updated", ", ".join(changed))
                         st.rerun()
                 if st.button("Delete demo", key=f"del_demo_{demo['id']}", icon=":material/delete:"):
                     queries.delete_demo(demo["id"])
+                    _log_system(account_id, "Demo removed", demo.get("demo_date") or "no date")
                     st.rerun()
 
 

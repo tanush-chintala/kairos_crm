@@ -105,6 +105,7 @@ def list_activities(account_id: int) -> list[dict]:
 def list_recent_activities(limit: int = 20) -> list[dict]:
     return (
         get_client().table("activities").select("*, accounts(practice_name)")
+        .eq("is_system", False)
         .order("date", desc=True).order("id", desc=True).limit(limit).execute().data
     )
 
