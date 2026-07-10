@@ -138,6 +138,47 @@ def delete_demo(demo_id: int) -> None:
     get_client().table("demos").delete().eq("id", demo_id).execute()
 
 
+def list_cadences(active_only: bool = True) -> list[dict]:
+    q = get_client().table("cadences").select("*").order("name")
+    if active_only:
+        q = q.eq("active", True)
+    return q.execute().data
+
+
+def create_cadence(fields: dict) -> None:
+    get_client().table("cadences").insert(fields).execute()
+
+
+def update_cadence(cadence_id: int, fields: dict) -> None:
+    get_client().table("cadences").update(fields).eq("id", cadence_id).execute()
+
+
+def list_cadence_steps(cadence_id: int) -> list[dict]:
+    return (
+        get_client().table("cadence_steps").select("*").eq("cadence_id", cadence_id)
+        .order("step_order").order("id").execute().data
+    )
+
+
+def create_cadence_step(fields: dict) -> None:
+    get_client().table("cadence_steps").insert(fields).execute()
+
+
+def update_cadence_step(step_id: int, fields: dict) -> None:
+    get_client().table("cadence_steps").update(fields).eq("id", step_id).execute()
+
+
+def delete_cadence_step(step_id: int) -> None:
+    get_client().table("cadence_steps").delete().eq("id", step_id).execute()
+
+
+def get_template(template_id: int) -> dict | None:
+    rows = (
+        get_client().table("email_templates").select("*").eq("id", template_id).execute().data
+    )
+    return rows[0] if rows else None
+
+
 def list_templates(category: str | None = None) -> list[dict]:
     q = get_client().table("email_templates").select("*").order("name")
     if category:

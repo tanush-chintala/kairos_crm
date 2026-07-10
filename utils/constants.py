@@ -70,5 +70,7 @@ TEMPLATE_CATEGORIES = [
     "Rejection / keep-in-touch",
 ]
 
+CADENCE_CHANNELS = ["Phone call", "Email", "Text", "In-person visit"]
+
 STALE_DAYS = 14
 WAITING_STALE_DAYS = 7

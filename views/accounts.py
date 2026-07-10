@@ -15,7 +15,7 @@ from utils.constants import (
     STALE_DAYS,
 )
 from utils.dedup import find_duplicates
-from utils.tz import central_today, parse_date
+from utils.tz import add_days_skip_weekend, central_today, parse_date
 
 _users_all = queries.list_users(active_only=False)
 _channels_all = queries.list_channel_types(active_only=False)
@@ -64,6 +64,7 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
             practice_phone = st.text_input("Practice phone", value=defaults.get("practice_phone") or "")
             website = st.text_input("Website", value=defaults.get("website") or "")
             city = st.text_input("City", value=defaults.get("city") or "")
+            state = st.text_input("State", value=defaults.get("state") or "")
             pms = st.text_input("PMS", value=defaults.get("pms") or "")
         with c2:
             owner_id = _owner_select("Kairos owner", f"{form_key}_owner", defaults.get("kairos_owner_id"))
@@ -86,13 +87,27 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
                 "Next action due date", value=parse_date(defaults.get("next_action_due_date")),
                 key=f"{form_key}_due",
             )
-            best_contact = st.text_input("Best contact", value=defaults.get("best_contact") or "")
-            decision_maker = st.text_input("Decision maker", value=defaults.get("decision_maker") or "")
             dm_reached = st.selectbox(
                 "Decision maker reached", DECISION_MAKER_REACHED,
                 index=DECISION_MAKER_REACHED.index(defaults.get("decision_maker_reached") or "Unknown"),
                 key=f"{form_key}_dm",
             )
+        b1, b2, b3 = st.columns(3)
+        best_contact = b1.text_input("Best contact", value=defaults.get("best_contact") or "")
+        best_contact_email = b2.text_input(
+            "Best contact email", value=defaults.get("best_contact_email") or ""
+        )
+        best_contact_phone = b3.text_input(
+            "Best contact phone", value=defaults.get("best_contact_phone") or ""
+        )
+        d1, d2, d3 = st.columns(3)
+        decision_maker = d1.text_input("Decision maker", value=defaults.get("decision_maker") or "")
+        decision_maker_email = d2.text_input(
+            "Decision maker email", value=defaults.get("decision_maker_email") or ""
+        )
+        decision_maker_phone = d3.text_input(
+            "Decision maker phone", value=defaults.get("decision_maker_phone") or ""
+        )
         initial_summary = st.text_area(
             "Initial encounter summary", value=defaults.get("initial_encounter_summary") or ""
         )
@@ -108,6 +123,7 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
         "practice_phone": practice_phone.strip() or None,
         "website": website.strip() or None,
         "city": city.strip() or None,
+        "state": state.strip() or None,
         "kairos_owner_id": owner_id,
         "channel_type_id": channel_id,
         "source_detail": source_detail.strip() or None,
@@ -119,7 +135,11 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
         "competitor_tool": competitor_tool,
         "pms": pms.strip() or None,
         "best_contact": best_contact.strip() or None,
+        "best_contact_email": best_contact_email.strip() or None,
+        "best_contact_phone": best_contact_phone.strip() or None,
         "decision_maker": decision_maker.strip() or None,
+        "decision_maker_email": decision_maker_email.strip() or None,
+        "decision_maker_phone": decision_maker_phone.strip() or None,
         "decision_maker_reached": dm_reached,
     }
 
@@ -133,6 +153,121 @@ def _show_matches(matches: list[dict]) -> None:
             f"{row.get('practice_phone') or 'no phone'}) — {where}: "
             + "; ".join(m["reasons"])
         )
+
+
+def _cadence_gap_label(step: dict) -> str:
+    gap_min = step["day_gap_min"]
+    gap_max = step.get("day_gap_max") or gap_min
+    if gap_max > gap_min:
+        return f"{gap_min}-{gap_max} days"
+    return f"{gap_min} day" + ("" if gap_min == 1 else "s")
+
+
+def _cadence_step_action(step: dict, index: int, total: int) -> str:
+    label = f"Cadence step {index}/{total}: {step['channel']}"
+    if step.get("note"):
+        label += f" — {step['note']}"
+    return label
+
+
+def _render_cadence_panel(account: dict) -> None:
+    account_id = account["id"]
+    with st.container(border=True):
+        if not account.get("cadence_id"):
+            active = queries.list_cadences()
+            if not active:
+                st.caption("No active cadences yet. Create one in Settings.")
+                return
+            c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+            pick = c1.selectbox(
+                "Enroll in a cadence", [c["id"] for c in active],
+                format_func=lambda i: next(c["name"] for c in active if c["id"] == i),
+                key="cadence_pick",
+            )
+            if c2.button("Enroll", icon=":material/playlist_add:", key="cadence_enroll"):
+                steps = queries.list_cadence_steps(pick)
+                if not steps:
+                    st.error("That cadence has no steps yet. Add some in Settings.")
+                else:
+                    first = steps[0]
+                    due = add_days_skip_weekend(central_today(), first["day_gap_min"])
+                    queries.update_account(account_id, {
+                        "cadence_id": pick,
+                        "cadence_step_order": 1,
+                        "cadence_paused": False,
+                        "next_action": _cadence_step_action(first, 1, len(steps)),
+                        "next_action_due_date": due.isoformat(),
+                    })
+                    st.rerun()
+            picked = next(c for c in active if c["id"] == pick)
+            if picked.get("description"):
+                st.caption(picked["description"])
+            return
+
+        cadences = queries.list_cadences(active_only=False)
+        cadence = next((c for c in cadences if c["id"] == account["cadence_id"]), None)
+        steps = queries.list_cadence_steps(account["cadence_id"]) if cadence else []
+        idx = account.get("cadence_step_order") or 1
+        if not steps or idx > len(steps):
+            st.warning("This account's cadence no longer has valid steps.")
+            if st.button("Exit cadence", key="cadence_exit_invalid"):
+                queries.update_account(account_id, {
+                    "cadence_id": None, "cadence_step_order": None, "cadence_paused": False,
+                })
+                st.rerun()
+            return
+
+        step = steps[idx - 1]
+        paused = " (paused)" if account.get("cadence_paused") else ""
+        st.markdown(
+            f"**Cadence: {cadence['name']}{paused}** — step {idx} of {len(steps)}: "
+            f"{step['channel']} ({_cadence_gap_label(step)} after previous)"
+        )
+        if step.get("note"):
+            st.caption(step["note"])
+        if step.get("email_template_id"):
+            template = queries.get_template(step["email_template_id"])
+            if template:
+                with st.expander(f"Template: {template['name']}", icon=":material/mail:"):
+                    if template.get("subject"):
+                        st.code(template["subject"], language=None)
+                    st.code(template.get("body") or "", language=None)
+        st.caption("Log an activity in the Activity Log tab to complete this step and schedule the next one.")
+        c1, c2, c3 = st.columns(3)
+        if idx < len(steps):
+            if c1.button("Skip step", icon=":material/skip_next:", key="cadence_skip", use_container_width=True):
+                nxt = steps[idx]
+                due = add_days_skip_weekend(central_today(), nxt["day_gap_min"])
+                queries.update_account(account_id, {
+                    "cadence_step_order": idx + 1,
+                    "next_action": _cadence_step_action(nxt, idx + 1, len(steps)),
+                    "next_action_due_date": due.isoformat(),
+                })
+                st.rerun()
+        elif c1.button("Skip step (ends cadence)", icon=":material/skip_next:", key="cadence_skip", use_container_width=True):
+            queries.update_account(account_id, {
+                "cadence_id": None, "cadence_step_order": None, "cadence_paused": False,
+                "next_action": None, "next_action_due_date": None,
+            })
+            st.toast("Cadence complete. Consider moving this account to Nurture Later.")
+            st.rerun()
+        if account.get("cadence_paused"):
+            if c2.button("Resume", icon=":material/play_arrow:", key="cadence_resume", use_container_width=True):
+                due = add_days_skip_weekend(central_today(), step["day_gap_min"])
+                queries.update_account(account_id, {
+                    "cadence_paused": False,
+                    "next_action": _cadence_step_action(step, idx, len(steps)),
+                    "next_action_due_date": due.isoformat(),
+                })
+                st.rerun()
+        elif c2.button("Pause", icon=":material/pause:", key="cadence_pause", use_container_width=True):
+            queries.update_account(account_id, {"cadence_paused": True})
+            st.rerun()
+        if c3.button("Exit cadence", icon=":material/stop:", key="cadence_exit", use_container_width=True):
+            queries.update_account(account_id, {
+                "cadence_id": None, "cadence_step_order": None, "cadence_paused": False,
+            })
+            st.rerun()
 
 
 # Streamlit has no native striping or header row for st.columns lists, so the
@@ -173,6 +308,7 @@ def _render_list() -> None:
             "city": "",
             "due_today_only": False,
             "overdue_only": False,
+            "in_cadence_only": False,
             "no_activity": False,
             "stale_days": STALE_DAYS,
             "sort_by": "Practice name",
@@ -251,17 +387,22 @@ def _render_list() -> None:
         )
         st.session_state["filters_persist"]["city"] = city
 
-        g1, g2, g3, g4 = st.columns([1, 1, 2, 2])
+        g1, g2, g3, g4, g5 = st.columns([1, 1, 1, 2, 2])
         due_today_only = g1.checkbox("Due today", value=st.session_state["filters_persist"]["due_today_only"])
         st.session_state["filters_persist"]["due_today_only"] = due_today_only
 
         overdue_only = g2.checkbox("Overdue", value=st.session_state["filters_persist"]["overdue_only"])
         st.session_state["filters_persist"]["overdue_only"] = overdue_only
 
-        no_activity = g3.checkbox("No activity in X+ days", value=st.session_state["filters_persist"]["no_activity"])
+        in_cadence_only = g3.checkbox(
+            "In cadence", value=st.session_state["filters_persist"].get("in_cadence_only", False)
+        )
+        st.session_state["filters_persist"]["in_cadence_only"] = in_cadence_only
+
+        no_activity = g4.checkbox("No activity in X+ days", value=st.session_state["filters_persist"]["no_activity"])
         st.session_state["filters_persist"]["no_activity"] = no_activity
 
-        stale_days = g4.number_input(
+        stale_days = g5.number_input(
             "X days", min_value=1,
             value=int(st.session_state["filters_persist"]["stale_days"]),
             disabled=not no_activity
@@ -283,6 +424,8 @@ def _render_list() -> None:
     )
 
     today = central_today()
+    if in_cadence_only:
+        accounts = [a for a in accounts if a.get("cadence_id")]
     if due_today_only:
         accounts = [a for a in accounts if parse_date(a.get("next_action_due_date")) == today]
     if overdue_only:
@@ -351,6 +494,7 @@ def _render_detail(account_id: int) -> None:
     st.info(
         f"**Current state:** {account.get('latest_activity_summary') or 'No activity logged yet.'}"
     )
+    _render_cadence_panel(account)
 
     details, contacts, activity, demos = st.tabs(["Details", "Contacts", "Activity Log", "Demos"])
 
@@ -407,6 +551,13 @@ def _render_detail(account_id: int) -> None:
                     st.rerun()
 
     with activity:
+        cadence_steps: list[dict] = []
+        cadence_idx = 0
+        if account.get("cadence_id") and not account.get("cadence_paused"):
+            cadence_steps = queries.list_cadence_steps(account["cadence_id"])
+            cadence_idx = account.get("cadence_step_order") or 1
+            if cadence_idx > len(cadence_steps):
+                cadence_steps = []
         with st.form("add_activity", clear_on_submit=True):
             st.markdown("**Log activity**")
             c1, c2, c3 = st.columns(3)
@@ -419,8 +570,17 @@ def _render_detail(account_id: int) -> None:
             next_action = c4.text_input("Next action")
             next_due = c5.date_input("Next action due date", value=None)
             st.caption("Setting a next action here updates the account's current next action.")
+            advance = False
+            if cadence_steps:
+                current_step = cadence_steps[cadence_idx - 1]
+                advance = st.checkbox(
+                    f"Completes cadence step {cadence_idx}/{len(cadence_steps)} "
+                    f"({current_step['channel']}) and schedules the next step "
+                    "(unless you set a next action above)",
+                    value=True,
+                )
             if st.form_submit_button("Log", icon=":material/add_task:"):
-                queries.log_activity({
+                payload = {
                     "account_id": account_id,
                     "date": act_date.isoformat(),
                     "kairos_owner_id": owner_id,
@@ -428,7 +588,34 @@ def _render_detail(account_id: int) -> None:
                     "summary": summary.strip() or None,
                     "next_action": next_action.strip() or None,
                     "next_action_due_date": next_due.isoformat() if next_due else None,
-                })
+                }
+                account_update: dict = {}
+                if advance:
+                    if cadence_idx < len(cadence_steps):
+                        nxt = cadence_steps[cadence_idx]
+                        if not payload["next_action"] and not payload["next_action_due_date"]:
+                            payload["next_action"] = _cadence_step_action(
+                                nxt, cadence_idx + 1, len(cadence_steps)
+                            )
+                            payload["next_action_due_date"] = add_days_skip_weekend(
+                                act_date, nxt["day_gap_min"]
+                            ).isoformat()
+                        account_update = {"cadence_step_order": cadence_idx + 1}
+                    else:
+                        account_update = {
+                            "cadence_id": None,
+                            "cadence_step_order": None,
+                            "cadence_paused": False,
+                        }
+                        if not payload["next_action"]:
+                            account_update["next_action"] = None
+                            account_update["next_action_due_date"] = None
+                        st.toast(
+                            "Cadence complete. Consider moving this account to Nurture Later."
+                        )
+                queries.log_activity(payload)
+                if account_update:
+                    queries.update_account(account_id, account_update)
                 st.rerun()
         for entry in queries.list_activities(account_id):
             st.markdown(

@@ -22,6 +22,15 @@ def end_of_week(today: date) -> date:
     return today + timedelta(days=6 - today.weekday())
 
 
+def add_days_skip_weekend(start: date, days: int) -> date:
+    """A follow-up landing on Sat/Sun would just sit until Monday, so roll it
+    forward to the next business day."""
+    result = start + timedelta(days=days)
+    while result.weekday() >= 5:
+        result += timedelta(days=1)
+    return result
+
+
 def parse_date(value) -> date | None:
     if value is None or value == "":
         return None

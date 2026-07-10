@@ -16,6 +16,13 @@ create table channel_types (
     active boolean not null default true
 );
 
+create table cadences (
+    id bigint generated always as identity primary key,
+    name text not null,
+    description text,
+    active boolean not null default true
+);
+
 create table accounts (
     id bigint generated always as identity primary key,
     practice_name text not null,
@@ -23,6 +30,7 @@ create table accounts (
     practice_phone text,
     website text,
     city text,
+    state text,
     kairos_owner_id bigint references users(id),
     channel_type_id bigint references channel_types(id),
     source_detail text,
@@ -35,8 +43,15 @@ create table accounts (
     competitor_tool text,
     pms text,
     best_contact text,
+    best_contact_email text,
+    best_contact_phone text,
     decision_maker text,
-    decision_maker_reached text not null default 'Unknown'
+    decision_maker_email text,
+    decision_maker_phone text,
+    decision_maker_reached text not null default 'Unknown',
+    cadence_id bigint references cadences(id),
+    cadence_step_order int,
+    cadence_paused boolean not null default false
 );
 
 create table contacts (
@@ -82,6 +97,19 @@ create table email_templates (
     notes text
 );
 
+-- day_gap_min/max are calendar days after the previous step (step 1: after
+-- enrollment). min is the scheduling default; max is shown as guidance.
+create table cadence_steps (
+    id bigint generated always as identity primary key,
+    cadence_id bigint not null references cadences(id) on delete cascade,
+    step_order int not null,
+    channel text not null,
+    day_gap_min int not null default 0,
+    day_gap_max int,
+    note text,
+    email_template_id bigint references email_templates(id) on delete set null
+);
+
 -- Rolling conversation history for the SendBlue text bot (supabase/functions/
 -- sendblue-bot). Only user text and final bot replies are stored, not tool calls.
 create table bot_messages (
@@ -102,6 +130,7 @@ create table bot_pending_writes (
     created_at timestamptz not null default now()
 );
 
+create index cadence_steps_cadence_idx on cadence_steps (cadence_id, step_order);
 create index accounts_stage_idx on accounts (pipeline_stage);
 create index accounts_due_idx on accounts (next_action_due_date);
 create index activities_account_idx on activities (account_id, date desc);
@@ -152,3 +181,24 @@ insert into channel_types (label) values
     ('Conference'),
     ('Referral'),
     ('Other');
+
+insert into cadences (name, description) values
+    ('New Lead Outreach', 'Standard 6-touch sequence over ~2 weeks for brand new leads.'),
+    ('Post-Demo Follow-up', '5-touch sequence to drive a decision after a completed demo.'),
+    ('No Response Revival', '3-touch sequence to re-engage a lead that went quiet.');
+
+insert into cadence_steps (cadence_id, step_order, channel, day_gap_min, day_gap_max, note) values
+    ((select id from cadences where name = 'New Lead Outreach'), 1, 'Phone call', 0, 0, 'Intro call - ask for the office manager'),
+    ((select id from cadences where name = 'New Lead Outreach'), 2, 'Email', 2, 3, 'Follow-up email referencing the call'),
+    ((select id from cadences where name = 'New Lead Outreach'), 3, 'Phone call', 2, 3, 'Second call - try a different time of day'),
+    ((select id from cadences where name = 'New Lead Outreach'), 4, 'Email', 3, 4, 'Value email - case study or one-pager'),
+    ((select id from cadences where name = 'New Lead Outreach'), 5, 'Phone call', 3, 4, 'Call, leave a voicemail if no answer'),
+    ((select id from cadences where name = 'New Lead Outreach'), 6, 'Email', 3, 4, 'Breakup email - close the loop, door stays open'),
+    ((select id from cadences where name = 'Post-Demo Follow-up'), 1, 'Email', 0, 0, 'Recap email with pricing and next steps'),
+    ((select id from cadences where name = 'Post-Demo Follow-up'), 2, 'Phone call', 2, 3, 'Check-in call - surface objections'),
+    ((select id from cadences where name = 'Post-Demo Follow-up'), 3, 'Email', 3, 4, 'Address objections, share proof points'),
+    ((select id from cadences where name = 'Post-Demo Follow-up'), 4, 'Phone call', 3, 4, 'Decision call - ask for a yes or no'),
+    ((select id from cadences where name = 'Post-Demo Follow-up'), 5, 'Email', 4, 5, 'Final decision email with a deadline'),
+    ((select id from cadences where name = 'No Response Revival'), 1, 'Email', 0, 0, 'Re-engagement email - new angle or recent news'),
+    ((select id from cadences where name = 'No Response Revival'), 2, 'Phone call', 3, 4, 'Call - reference the email'),
+    ((select id from cadences where name = 'No Response Revival'), 3, 'Email', 4, 5, 'Last attempt before Nurture Later');
