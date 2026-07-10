@@ -7,6 +7,7 @@ import streamlit as st
 from db import queries
 from utils.constants import (
     ACTIVITY_TYPES,
+    CADENCE_CHANNELS,
     COMPETITOR_TOOLS,
     DECISION_MAKER_REACHED,
     DEMO_STATUSES,
@@ -202,6 +203,31 @@ def _render_cadence_panel(account: dict) -> None:
             picked = next(c for c in active if c["id"] == pick)
             if picked.get("description"):
                 st.caption(picked["description"])
+            st.divider()
+            st.markdown("**Or schedule a one-off follow-up** (no cadence needed)")
+            q1, q2, q3, q4 = st.columns([2, 1, 3, 1], vertical_alignment="bottom")
+            quick_channel = q1.selectbox(
+                "Follow-up type", CADENCE_CHANNELS + ["Custom"], key="quick_channel"
+            )
+            quick_days = q2.number_input("In how many days", min_value=0, value=2, key="quick_days")
+            quick_note = q3.text_input(
+                "Note (this is the whole action when type is Custom)", key="quick_note"
+            )
+            if q4.button("Schedule", icon=":material/event:", key="quick_schedule", use_container_width=True):
+                note = quick_note.strip()
+                if quick_channel == "Custom":
+                    action = note
+                else:
+                    action = quick_channel + (f" — {note}" if note else "")
+                if not action:
+                    st.error("Custom follow-ups need a note describing the action.")
+                else:
+                    due = add_days_skip_weekend(central_today(), int(quick_days))
+                    queries.update_account(account_id, {
+                        "next_action": action,
+                        "next_action_due_date": due.isoformat(),
+                    })
+                    st.rerun()
             return
 
         cadences = queries.list_cadences(active_only=False)
