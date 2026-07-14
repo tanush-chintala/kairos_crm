@@ -60,6 +60,7 @@ owner_filter = st.selectbox(
 
 def _open_account(account_id: int) -> None:
     st.session_state["selected_account_id"] = account_id
+    st.session_state["back_to_page"] = "views/dashboard.py"
     st.switch_page("views/accounts.py")
 
 

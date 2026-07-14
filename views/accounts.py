@@ -497,6 +497,7 @@ def _render_list() -> None:
             cols[5].write(str(acct.get("next_action_due_date") or "—"))
             if cols[6].button("Open", key=f"open_{acct['id']}", use_container_width=True):
                 st.session_state["selected_account_id"] = acct["id"]
+                st.session_state.pop("back_to_page", None)
                 st.rerun()
 
 
@@ -504,11 +505,23 @@ def _render_detail(account_id: int) -> None:
     account = queries.get_account(account_id)
     if account is None:
         st.session_state.pop("selected_account_id", None)
-        st.rerun()
+        back_to_page = st.session_state.pop("back_to_page", None)
+        if back_to_page:
+            st.switch_page(back_to_page)
+        else:
+            st.rerun()
 
-    if st.button("Back to accounts", icon=":material/arrow_back:"):
+    back_to_page = st.session_state.get("back_to_page")
+    back_label = "Back to dashboard" if back_to_page == "views/dashboard.py" else (
+        "Back to overview" if back_to_page == "views/overview.py" else "Back to accounts"
+    )
+    if st.button(back_label, icon=":material/arrow_back:"):
         st.session_state.pop("selected_account_id", None)
-        st.rerun()
+        st.session_state.pop("back_to_page", None)
+        if back_to_page:
+            st.switch_page(back_to_page)
+        else:
+            st.rerun()
 
     from utils.ui import render_stage_badge
     c1, c2 = st.columns([5, 1], vertical_alignment="center")
@@ -552,7 +565,11 @@ def _render_detail(account_id: int) -> None:
                 if st.button("Delete permanently", icon=":material/delete_forever:"):
                     queries.delete_account(account_id)
                     st.session_state.pop("selected_account_id", None)
-                    st.rerun()
+                    back_to_page = st.session_state.pop("back_to_page", None)
+                    if back_to_page:
+                        st.switch_page(back_to_page)
+                    else:
+                        st.rerun()
 
     with contacts:
         with st.form("key_people"):

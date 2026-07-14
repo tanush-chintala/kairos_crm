@@ -40,6 +40,7 @@ _LIST_HEADERS = ["Practice", "Owner", "Stage", "Next action", "Due date", ""]
 
 def _open_account(account_id: int) -> None:
     st.session_state["selected_account_id"] = account_id
+    st.session_state["back_to_page"] = "views/overview.py"
     st.switch_page("views/accounts.py")
 
 
