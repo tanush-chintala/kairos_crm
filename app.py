@@ -9,6 +9,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from utils.ui import GLOBAL_PREMIUM_CSS
+st.markdown(GLOBAL_PREMIUM_CSS, unsafe_allow_html=True)
+
+
 from db import queries
 
 # No auth by design (spec section 3): a user-select landing screen sets a

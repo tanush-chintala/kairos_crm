@@ -48,7 +48,12 @@ def normalize_domain(url) -> str:
 
 
 def _norm_city(city) -> str:
-    return re.sub(r"\s+", " ", str(city or "").strip().lower())
+    s = str(city or "").strip().lower()
+    # Remove standard 2-letter state codes at the end (e.g. "dallas, tx", "dallas tx")
+    s = re.sub(r"[,\s]+\b[a-z]{2}\b$", "", s)
+    s = s.removesuffix("texas").strip()
+    return re.sub(r"\s+", " ", s)
+
 
 
 def _norm_name(name) -> str:

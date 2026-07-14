@@ -147,7 +147,7 @@ create index demos_account_idx on demos (account_id);
 create function sync_account_next_action() returns trigger
 language plpgsql as $$
 begin
-    if new.next_action is not null or new.next_action_due_date is not null then
+    if not new.is_system then
         update accounts
         set next_action = new.next_action,
             next_action_due_date = new.next_action_due_date
@@ -156,6 +156,7 @@ begin
     return new;
 end;
 $$;
+
 
 create trigger activities_sync_next_action
 after insert on activities

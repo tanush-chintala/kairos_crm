@@ -1,0 +1,5 @@
+clinic name,phone number,contact email,city,state,best contact found,notes,follow-up date
+Apex Dental Clinic,1234567890,info@apexdental.com,Dallas,TX,Dr. Apex,Interested in dental software,2026-07-20
+Apex Dental,1234567890,info@apexdental.com,Dallas,TX,Dr. Apex,Duplicate phone and name check,2026-07-22
+,9999999999,nameless@dentistry.com,Houston,TX,No Name,This row has no clinic name,2026-07-25
+Starlight Smiles,5551234567,hello@starlight.com,Austin,TX,Dr. Starlight,Wants a demo,2026-07-21

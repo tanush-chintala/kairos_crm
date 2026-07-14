@@ -174,6 +174,16 @@ skipped_dupes = len(rows) - len(to_import)
 st.subheader("5. Commit", divider=True)
 st.write(f"Ready to import {len(to_import)} accounts ({skipped_dupes} flagged rows skipped).")
 if st.button(f"Import {len(to_import)} accounts", icon=":material/upload:", disabled=not to_import):
+    from utils.tz import central_today
     for payload in to_import:
-        queries.create_account(payload)
+        created = queries.create_account(payload)
+        queries.log_activity({
+            "account_id": created["id"],
+            "date": central_today().isoformat(),
+            "kairos_owner_id": st.session_state["current_user"]["id"],
+            "activity_type": "Account imported",
+            "summary": "Imported via CSV",
+            "is_system": True,
+        })
     st.success(f"Imported {len(to_import)} accounts. Skipped {skipped_dupes} flagged and {skipped_no_name} nameless rows.")
+

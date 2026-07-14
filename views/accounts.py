@@ -327,7 +327,7 @@ def _render_list() -> None:
     if "filters_persist" not in st.session_state:
         st.session_state["filters_persist"] = {
             "search": "",
-            "owner": st.session_state["current_user"]["id"],
+            "owner": None,
             "stage": None,
             "channel": None,
             "city": "",
@@ -491,7 +491,8 @@ def _render_list() -> None:
             cols[0].markdown(f"**{acct['practice_name']}**")
             cols[1].write(acct.get("city") or "—")
             cols[2].write(_user_name.get(acct.get("kairos_owner_id"), "—"))
-            cols[3].write(acct.get("pipeline_stage"))
+            from utils.ui import render_stage_badge
+            cols[3].markdown(render_stage_badge(acct.get("pipeline_stage")), unsafe_allow_html=True)
             cols[4].write(acct.get("next_action") or "—")
             cols[5].write(str(acct.get("next_action_due_date") or "—"))
             if cols[6].button("Open", key=f"open_{acct['id']}", use_container_width=True):
@@ -509,10 +510,12 @@ def _render_detail(account_id: int) -> None:
         st.session_state.pop("selected_account_id", None)
         st.rerun()
 
-    st.title(account["practice_name"])
+    from utils.ui import render_stage_badge
+    c1, c2 = st.columns([5, 1], vertical_alignment="center")
+    c1.title(account["practice_name"])
+    c2.markdown(render_stage_badge(account.get("pipeline_stage")), unsafe_allow_html=True)
     st.caption(
         f"Owner: {_user_name.get(account.get('kairos_owner_id'), '—')} | "
-        f"Stage: {account.get('pipeline_stage')} | "
         f"Channel: {_channel_name.get(account.get('channel_type_id'), '—')} | "
         f"Last action: {account.get('last_action_date') or '—'}"
     )

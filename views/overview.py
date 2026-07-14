@@ -78,13 +78,15 @@ demos_this_week = [
     and (dd := parse_date(d.get("demo_date"))) and today <= dd <= week_end
 ]
 
+from utils.ui import render_kpi_card
 m = st.columns(6)
-m[0].metric("Total accounts", len(accounts))
-m[1].metric("Open pipeline", len(open_accounts))
-m[2].metric("Due today", len(buckets["due_today"]))
-m[3].metric("Overdue", len(buckets["overdue"]))
-m[4].metric("Demos this week", len(demos_this_week))
-m[5].metric("Closed won", len(won))
+m[0].markdown(render_kpi_card("Total accounts", len(accounts), "💼", "#475569"), unsafe_allow_html=True)
+m[1].markdown(render_kpi_card("Open pipeline", len(open_accounts), "⚡", "#2563eb"), unsafe_allow_html=True)
+m[2].markdown(render_kpi_card("Due today", len(buckets["due_today"]), "📅", "#d97706"), unsafe_allow_html=True)
+m[3].markdown(render_kpi_card("Overdue", len(buckets["overdue"]), "⚠️", "#dc2626"), unsafe_allow_html=True)
+m[4].markdown(render_kpi_card("Demos this week", len(demos_this_week), "🤝", "#7e22ce"), unsafe_allow_html=True)
+m[5].markdown(render_kpi_card("Closed won", len(won), "🏆", "#16a34a"), unsafe_allow_html=True)
+
 
 st.subheader("Pipeline by stage", divider=True)
 stage_counts = {s: 0 for s in PIPELINE_STAGES}
@@ -176,7 +178,8 @@ else:
             cols = st.columns(_LIST_WIDTHS, vertical_alignment="center")
             cols[0].markdown(f"**{acct['practice_name']}**")
             cols[1].write(user_name.get(acct.get("kairos_owner_id"), "—"))
-            cols[2].write(acct.get("pipeline_stage"))
+            from utils.ui import render_stage_badge
+            cols[2].markdown(render_stage_badge(acct.get("pipeline_stage")), unsafe_allow_html=True)
             cols[3].write(acct.get("next_action") or "—")
             cols[4].write(str(acct.get("next_action_due_date") or "—"))
             if cols[5].button("Open", key=f"overview_open_{acct['id']}", use_container_width=True):
