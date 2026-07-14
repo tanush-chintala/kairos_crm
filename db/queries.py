@@ -13,8 +13,9 @@ def list_users(active_only: bool = True) -> list[dict]:
     return q.execute().data
 
 
-def add_user(name: str) -> None:
-    get_client().table("users").insert({"name": name}).execute()
+def add_user(name: str) -> int:
+    res = get_client().table("users").insert({"name": name}).execute()
+    return res.data[0]["id"]
 
 
 def set_user_active(user_id: int, active: bool) -> None:
@@ -28,8 +29,9 @@ def list_channel_types(active_only: bool = True) -> list[dict]:
     return q.execute().data
 
 
-def add_channel_type(label: str) -> None:
-    get_client().table("channel_types").insert({"label": label}).execute()
+def add_channel_type(label: str) -> int:
+    res = get_client().table("channel_types").insert({"label": label}).execute()
+    return res.data[0]["id"]
 
 
 def set_channel_type_active(channel_id: int, active: bool) -> None:
@@ -197,3 +199,9 @@ def update_template(template_id: int, fields: dict) -> None:
 
 def delete_template(template_id: int) -> None:
     get_client().table("email_templates").delete().eq("id", template_id).execute()
+
+
+def get_distinct_column_values(table: str, column: str) -> list[str]:
+    res = get_client().table(table).select(column).execute()
+    vals = {r[column] for r in res.data if r.get(column)}
+    return sorted(list(vals))
