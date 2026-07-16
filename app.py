@@ -115,6 +115,9 @@ if st.session_state.get("current_user"):
                 font-size: 0.75rem !important;
                 font-weight: 400 !important;
             }
+            [data-testid="stSidebar"] [data-testid="stSpinner"] {
+                padding-left: 0.25rem !important;
+            }
             [data-testid="stSidebar"] div[data-testid="stChatMessage"] + div[data-testid="stChatMessage"] {
                 margin-top: 0 !important;
             }
