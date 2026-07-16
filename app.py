@@ -85,6 +85,10 @@ if st.session_state.get("current_user"):
                 width: 0.75rem !important;
                 height: 0.75rem !important;
             }
+            [data-testid="stSidebar"] [data-testid="stChatInput"] textarea,
+            [data-testid="stSidebar"] [data-testid="stChatInput"] textarea::placeholder {
+                font-size: 0.875rem !important; /* match nav label: fontSizes.sm */
+            }
             [data-testid="stSidebar"] div[data-testid="stChatMessage"] + div[data-testid="stChatMessage"] {
                 margin-top: 0 !important;
             }
