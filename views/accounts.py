@@ -396,7 +396,7 @@ _LIST_CSS = """
 </style>
 """
 
-_LIST_WIDTHS = [3, 2, 2, 2, 3, 2, 1.4]
+_LIST_WIDTHS = [3, 2, 1.5, 2.5, 3, 2, 1.4]
 _LIST_HEADERS = ["Practice", "City", "Owner", "Stage", "Next action", "Due date", ""]
 
 
@@ -514,7 +514,7 @@ def _render_list() -> None:
         )
         st.session_state["filters_persist"]["stale_days"] = stale_days
 
-        sort_by_options = ["Practice name", "Due date", "Last action (oldest first)", "Created (newest first)", "Stage"]
+        sort_by_options = ["Practice name", "Due date", "Last action (oldest first)", "Most recently added", "Least recently added", "Stage"]
         sort_by_default = st.session_state["filters_persist"]["sort_by"]
         sort_by_index = sort_by_options.index(sort_by_default) if sort_by_default in sort_by_options else 0
         sort_by = st.selectbox(
@@ -550,8 +550,10 @@ def _render_list() -> None:
         accounts.sort(key=lambda a: str(a.get("next_action_due_date") or far_future))
     elif sort_by == "Last action (oldest first)":
         accounts.sort(key=lambda a: str(a.get("last_action_date") or ""))
-    elif sort_by == "Created (newest first)":
+    elif sort_by == "Most recently added":
         accounts.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
+    elif sort_by == "Least recently added":
+        accounts.sort(key=lambda a: str(a.get("created_at") or ""))
     elif sort_by == "Stage":
         accounts.sort(key=lambda a: PIPELINE_STAGES.index(a["pipeline_stage"]))
 
