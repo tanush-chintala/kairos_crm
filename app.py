@@ -231,7 +231,8 @@ with st.sidebar:
                     resp = requests.post(url, json=payload, timeout=30)
                     resp.raise_for_status()
                 except Exception as e:
-                    st.error(f"Bot error: {e}")
+                    body = getattr(getattr(e, "response", None), "text", "")
+                    st.error(f"Bot error: {e}" + (f" - {body}" if body else ""))
         st.rerun()
 
 pages.run()
