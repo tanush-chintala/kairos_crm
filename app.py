@@ -89,22 +89,15 @@ if st.session_state.get("current_user"):
             [data-testid="stSidebar"] [data-testid="stChatInput"] textarea::placeholder {
                 font-size: 0.75rem !important; /* match chat message text */
             }
+            [data-testid="stSidebar"] [data-testid="stChatInput"] {
+                align-items: center !important;
+            }
             [data-testid="stSidebar"] [data-testid="stChatInput"] textarea {
-                min-height: 1.5rem !important;
-                padding-top: 0.25rem !important;
-                padding-bottom: 0.25rem !important;
-            }
-            [data-testid="stSidebar"] [data-testid="stChatInput"] > div {
-                min-height: 0 !important;
-            }
-            [data-testid="stSidebar"] [data-testid="stChatInputSubmitButton"] {
-                width: 1.5rem !important;
-                height: 1.5rem !important;
-                padding: 0 !important;
+                min-height: 1.75rem !important;
             }
             [data-testid="stSidebar"] [data-testid="stChatInputSubmitButton"] svg {
-                width: 1rem !important;
-                height: 1rem !important;
+                width: 1.1rem !important;
+                height: 1.1rem !important;
             }
             [data-testid="stSidebar"] div[data-testid="stChatMessage"] + div[data-testid="stChatMessage"] {
                 margin-top: 0 !important;
