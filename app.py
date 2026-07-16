@@ -88,7 +88,7 @@ if st.session_state.get("current_user"):
             }
             /* Tighten up spacing around the navigation menu */
             [data-testid="stSidebarNav"] {
-                margin-top: 2.25rem !important;
+                margin-top: 1.75rem !important;
                 margin-bottom: 0 !important;
                 padding-bottom: 0 !important;
             }
