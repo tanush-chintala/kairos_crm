@@ -94,7 +94,7 @@ if st.session_state.get("current_user"):
             }
             [data-testid="stSidebar"] [data-testid="stChatInput"] textarea {
                 min-height: 1.75rem !important;
-                padding-top: 0 !important;
+                padding-top: 3px !important;
                 padding-bottom: 0 !important;
                 line-height: 1.75rem !important;
             }
