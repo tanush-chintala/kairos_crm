@@ -205,3 +205,12 @@ def get_distinct_column_values(table: str, column: str) -> list[str]:
     res = get_client().table(table).select(column).execute()
     vals = {r[column] for r in res.data if r.get(column)}
     return sorted(list(vals))
+
+
+def list_bot_messages(user_id: int, limit: int = 20) -> list[dict]:
+    data = (
+        get_client().table("bot_messages").select("*")
+        .eq("user_id", user_id)
+        .order("id", desc=True).limit(limit).execute().data
+    )
+    return list(reversed(data))
