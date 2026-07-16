@@ -1,7 +1,12 @@
 import streamlit as st
 from dotenv import load_dotenv
+import requests
+import os
+from streamlit_cookies_controller import CookieController
 
 load_dotenv()
+
+controller = CookieController()
 
 st.set_page_config(
     page_title="Kairos CRM",
@@ -12,34 +17,92 @@ st.set_page_config(
 from utils.ui import GLOBAL_PREMIUM_CSS
 st.markdown(GLOBAL_PREMIUM_CSS, unsafe_allow_html=True)
 
-
 from db import queries
 
-# No auth by design (spec section 3): a user-select landing screen sets a
-# convenience default for owner fields, not an identity enforcement.
-if st.session_state.get("current_user") is None:
-    st.title("Kairos CRM")
-    st.subheader("Who are you?")
-    st.caption(
-        "Your selection pre-fills the Kairos Owner field on new records. "
-        "It is always editable per-entry."
-    )
-    try:
-        users = queries.list_users()
-    except Exception as e:
-        st.error(str(e))
-        st.stop()
-    if not users:
-        st.warning("No active users found. Run schema.sql to seed the users table.")
-        st.stop()
-    cols = st.columns(min(len(users), 4))
-    for i, user in enumerate(users):
-        if cols[i % len(cols)].button(
-            user["name"], key=f"pick_user_{user['id']}", use_container_width=True
-        ):
-            st.session_state["current_user"] = user
+if st.session_state.get("current_user"):
+    with st.sidebar:
+        st.markdown("""
+            <style>
+            /* Target the button immediately following this anchor and style it like a nav item */
+            div.element-container:has(.user-btn-anchor) + div.element-container {
+                position: absolute !important;
+                top: 1rem !important;
+                left: 1rem !important;
+                width: auto !important;
+                max-width: calc(100% - 4rem) !important;
+                z-index: 9999 !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button {
+                background-color: transparent !important;
+                color: rgba(26, 26, 26, 0.8) !important;
+                border: none !important;
+                box-shadow: none !important;
+                padding: 6px 12px !important;
+                border-radius: 8px !important;
+                font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+                font-size: 16px !important;
+                font-weight: 400 !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: flex-start !important;
+                gap: 8px !important;
+                width: 100% !important;
+                transition: background-color 0.2s ease, color 0.2s ease !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button p {
+                font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+                font-size: 16px !important;
+                font-weight: 400 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button span[data-testid="stIconMaterial"] {
+                font-size: 20px !important; /* Matches page navigation icons at 1.25rem / 20px */
+                color: inherit !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:hover {
+                background-color: rgba(182, 182, 164, 0.15) !important;
+                color: rgb(26, 26, 26) !important;
+                border: none !important;
+                box-shadow: none !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:hover p {
+                color: rgb(26, 26, 26) !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:active {
+                background-color: rgba(182, 182, 164, 0.25) !important;
+                font-weight: 600 !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:active p {
+                font-weight: 600 !important;
+            }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button span {
+                color: inherit !important;
+            }
+            /* Tighten up spacing around the navigation menu */
+            [data-testid="stSidebarNav"] {
+                margin-top: 3.5rem !important;
+                margin-bottom: 0 !important;
+                padding-bottom: 0 !important;
+            }
+            [data-testid="stSidebarUserContent"] {
+                padding-top: 0 !important;
+                margin-top: -1rem !important;
+            }
+            [data-testid="stSidebarNavSeparator"], [data-testid="stSidebar"] hr {
+                transform: translateY(-20px) !important;
+                margin-bottom: 0.5rem !important;
+                border: none !important;
+                background: transparent !important;
+            }
+            </style>
+            <div class="user-btn-anchor"></div>
+        """, unsafe_allow_html=True)
+        if st.button(f"Logged in as {st.session_state['current_user']['name']}", icon=":material/person:", use_container_width=True, help="Click to switch user"):
+            st.session_state["current_user"] = None
+            st.session_state.pop("filters_persist", None)
+            controller.remove("kairos_user_id")
             st.rerun()
-    st.stop()
 
 pages = st.navigation(
     [
@@ -52,13 +115,66 @@ pages = st.navigation(
     ]
 )
 
+if st.session_state.get("current_user") is None:
+    try:
+        users = queries.list_users()
+    except Exception as e:
+        st.error(str(e))
+        st.stop()
+        
+    saved_user_id = controller.get("kairos_user_id")
+    if saved_user_id:
+        for u in users:
+            if str(u["id"]) == str(saved_user_id):
+                st.session_state["current_user"] = u
+                st.rerun()
+
+    st.title("Kairos CRM")
+    st.subheader("Who are you?")
+    st.caption(
+        "Your selection pre-fills the Kairos Owner field on new records. "
+        "It is always editable per-entry."
+    )
+    if not users:
+        st.warning("No active users found. Run schema.sql to seed the users table.")
+        st.stop()
+    cols = st.columns(min(len(users), 4))
+    for i, user in enumerate(users):
+        if cols[i % len(cols)].button(
+            user["name"], key=f"pick_user_{user['id']}", use_container_width=True
+        ):
+            st.session_state["current_user"] = user
+            controller.set("kairos_user_id", str(user["id"]))
+            st.rerun()
+    st.stop()
+
 with st.sidebar:
-    st.markdown(f"Acting as: **{st.session_state['current_user']['name']}**")
-    if st.button("Switch user", icon=":material/swap_horiz:", use_container_width=True):
-        st.session_state["current_user"] = None
-        # Filter defaults derive from the acting user, so they must reinitialize
-        st.session_state.pop("filters_persist", None)
+    chat_container = st.container(height=400)
+    
+    current_user_id = st.session_state['current_user']['id']
+    messages = queries.list_bot_messages(current_user_id)
+    
+    with chat_container:
+        if not messages:
+            st.caption("No messages yet. Try asking 'what's due today?'")
+        for msg in messages:
+            role = "user" if msg["role"] == "user" else "assistant"
+            st.chat_message(role).write(msg["content"])
+            
+    if prompt := st.chat_input("Message Kairos Bot..."):
+        url = os.environ.get("SUPABASE_URL", "") + "/functions/v1/sendblue-bot?debug=1&token=" + os.environ.get("BOT_WEBHOOK_TOKEN", "")
+        payload = {
+            "user_id": current_user_id,
+            "content": prompt
+        }
+        with chat_container:
+            st.chat_message("user").write(prompt)
+            with st.spinner("Thinking..."):
+                try:
+                    resp = requests.post(url, json=payload, timeout=30)
+                    resp.raise_for_status()
+                except Exception as e:
+                    st.error(f"Bot error: {e}")
         st.rerun()
-    st.divider()
 
 pages.run()
