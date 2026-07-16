@@ -94,6 +94,13 @@ if st.session_state.get("current_user"):
             }
             [data-testid="stSidebar"] [data-testid="stChatInput"] textarea {
                 min-height: 1.75rem !important;
+                padding-top: 0 !important;
+                padding-bottom: 0 !important;
+                line-height: 1.75rem !important;
+            }
+            [data-testid="stSidebar"] [data-testid="stChatInputSubmitButton"] {
+                align-self: center !important;
+                margin-bottom: 0 !important;
             }
             [data-testid="stSidebar"] [data-testid="stChatInputSubmitButton"] svg {
                 width: 1.1rem !important;
