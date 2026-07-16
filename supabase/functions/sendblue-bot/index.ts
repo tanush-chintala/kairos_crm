@@ -720,9 +720,10 @@ function sendblueHeaders(): HeadersInit {
 
 async function sendText(number: string, content: string, fromNumber: string) {
   const body: Record<string, unknown> = { number, content };
-  // SendBlue rejects sends without from_number on this account. The inbound
-  // payload's to_number is the line the user texted, so replying from it is
-  // always correct; the env var is only a fallback.
+  // SendBlue rejects sends whose from_number is not an authorized line on the
+  // account ("This from number is not authorized on this account"). The inbound
+  // webhook's sendblue_number is the line the message arrived on and is always
+  // authorized; the env var is a fallback for non-webhook callers.
   const from = fromNumber || SENDBLUE_FROM_NUMBER;
   if (from) body.from_number = from;
   const resp = await fetch("https://api.sendblue.com/api/send-message", {
@@ -730,7 +731,9 @@ async function sendText(number: string, content: string, fromNumber: string) {
     headers: sendblueHeaders(),
     body: JSON.stringify(body),
   });
-  if (!resp.ok) console.error(`SendBlue send failed ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+  if (!resp.ok) {
+    console.error(`SendBlue send failed ${resp.status} (from=${from || "unset"}): ${(await resp.text()).slice(0, 300)}`);
+  }
 }
 
 function sendTypingIndicator(number: string, fromNumber: string) {
@@ -780,18 +783,26 @@ Deno.serve(async (req) => {
   if (payload.is_outbound === true) return new Response("ignored outbound");
   const fromNumber = String(payload.from_number ?? "");
   const content = String(payload.content ?? "").trim().slice(0, 2000);
-  if (!fromNumber || !content) return new Response("ignored empty");
+  if ((!fromNumber && !payload.user_id) || !content) return new Response("ignored empty");
 
   const { data: users } = await supabase.from("users").select("id, name, phone").eq("active", true);
   const { data: channelTypes } = await supabase.from("channel_types").select("id, label").eq("active", true);
-  const user = (users ?? []).find((u) => u.phone && phoneDigits(u.phone) === phoneDigits(fromNumber));
+  
+  let user = null;
+  if (payload.user_id) {
+    user = (users ?? []).find((u) => u.id === Number(payload.user_id));
+  } else {
+    user = (users ?? []).find((u) => u.phone && phoneDigits(u.phone) === phoneDigits(fromNumber));
+  }
   if (!user) {
     console.log(`Ignored message from unknown number ${fromNumber}`);
     return new Response("ignored unknown sender");
   }
 
   const debug = url.searchParams.get("debug") === "1";
-  const lineNumber = String(payload.to_number ?? "");
+  // sendblue_number is the authorized line the message arrived on; to_number
+  // from the real webhook is not accepted as a from_number by the send API.
+  const lineNumber = String(payload.sendblue_number ?? payload.to_number ?? "");
   sendTypingIndicator(fromNumber, lineNumber);
   const sender = user;
 
