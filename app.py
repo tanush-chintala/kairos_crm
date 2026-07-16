@@ -37,27 +37,34 @@ if st.session_state.get("current_user"):
                 color: rgba(26, 26, 26, 0.8) !important;
                 border: none !important;
                 box-shadow: none !important;
-                padding: 6px 12px !important;
-                border-radius: 8px !important;
+                padding: 0.125rem 0.5rem !important; /* nav link: paddingLeft/Right spacing.sm, marginTop/Bottom threeXS */
+                border-radius: 0.5rem !important; /* nav link: radii.default */
                 font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-                font-size: 16px !important;
+                font-size: 0.875rem !important; /* nav label: fontSizes.sm */
                 font-weight: 400 !important;
+                line-height: 2 !important; /* nav link: lineHeights.menuItem */
                 display: flex !important;
                 align-items: center !important;
                 justify-content: flex-start !important;
-                gap: 8px !important;
+                gap: 0.5rem !important; /* nav link: spacing.sm */
                 width: 100% !important;
                 transition: background-color 0.2s ease, color 0.2s ease !important;
             }
+            div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button [data-testid="stMarkdownContainer"] {
+                flex: 0 1 auto !important;
+            }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button p {
                 font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-                font-size: 16px !important;
+                font-size: 0.875rem !important; /* nav label: fontSizes.sm */
                 font-weight: 400 !important;
+                line-height: 2 !important;
+                text-align: left !important;
                 margin: 0 !important;
                 padding: 0 !important;
             }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button span[data-testid="stIconMaterial"] {
-                font-size: 20px !important; /* Matches page navigation icons at 1.25rem / 20px */
+                font-size: 1rem !important; /* nav icon: DynamicIcon size "base" = iconSizes.base = 1rem */
+                width: 1rem !important;
                 color: inherit !important;
             }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:hover {
