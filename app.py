@@ -70,17 +70,31 @@ if st.session_state.get("current_user"):
             }
             [data-testid="stSidebar"] [data-testid="stChatMessageContent"],
             [data-testid="stSidebar"] [data-testid="stChatMessageContent"] p {
-                font-size: 0.875rem !important; /* match nav label: fontSizes.sm */
+                font-size: 0.75rem !important;
             }
             [data-testid="stSidebar"] [data-testid="stChatMessage"] {
-                padding-top: 0.25rem !important;
-                padding-bottom: 0.25rem !important;
+                padding: 0.25rem 0.25rem !important;
+                gap: 0.5rem !important;
+            }
+            [data-testid="stSidebar"] [data-testid^="stChatMessageAvatar"] {
+                width: 1.25rem !important;
+                height: 1.25rem !important;
+                flex-shrink: 0 !important;
+            }
+            [data-testid="stSidebar"] [data-testid^="stChatMessageAvatar"] svg {
+                width: 0.75rem !important;
+                height: 0.75rem !important;
             }
             [data-testid="stSidebar"] div[data-testid="stChatMessage"] + div[data-testid="stChatMessage"] {
                 margin-top: 0 !important;
             }
             [data-testid="stSidebar"] [data-testid="stVerticalBlock"]:has(> [data-testid="stChatMessage"]) {
                 gap: 0.25rem !important;
+            }
+            [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stChatMessage"]) > div,
+            [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stChatMessage"]) [data-testid="stElementContainer"] {
+                padding-left: 0.25rem !important;
+                padding-right: 0.25rem !important;
             }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:hover {
                 background-color: rgba(182, 182, 164, 0.15) !important;
