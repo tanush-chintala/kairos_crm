@@ -41,7 +41,7 @@ if st.session_state.get("current_user"):
                 border-radius: 0.5rem !important; /* nav link: radii.default */
                 font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
                 font-size: 0.875rem !important; /* nav label: fontSizes.sm */
-                font-weight: 400 !important;
+                font-weight: 600 !important;
                 line-height: 2 !important; /* nav link: lineHeights.menuItem */
                 display: flex !important;
                 align-items: center !important;
@@ -56,7 +56,7 @@ if st.session_state.get("current_user"):
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button p {
                 font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
                 font-size: 0.875rem !important; /* nav label: fontSizes.sm */
-                font-weight: 400 !important;
+                font-weight: 600 !important;
                 line-height: 2 !important;
                 text-align: left !important;
                 margin: 0 !important;
@@ -65,7 +65,12 @@ if st.session_state.get("current_user"):
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button span[data-testid="stIconMaterial"] {
                 font-size: 1rem !important; /* nav icon: DynamicIcon size "base" = iconSizes.base = 1rem */
                 width: 1rem !important;
+                font-weight: 600 !important;
                 color: inherit !important;
+            }
+            [data-testid="stSidebar"] [data-testid="stChatMessageContent"],
+            [data-testid="stSidebar"] [data-testid="stChatMessageContent"] p {
+                font-size: 0.875rem !important; /* match nav label: fontSizes.sm */
             }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:hover {
                 background-color: rgba(182, 182, 164, 0.15) !important;
