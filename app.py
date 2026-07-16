@@ -29,7 +29,7 @@ if st.session_state.get("current_user"):
                 top: 1rem !important;
                 left: 1rem !important;
                 width: auto !important;
-                max-width: calc(100% - 4rem) !important;
+                max-width: calc(100% - 2.5rem) !important;
                 z-index: 9999 !important;
             }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button {
@@ -52,6 +52,7 @@ if st.session_state.get("current_user"):
             }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button [data-testid="stMarkdownContainer"] {
                 flex: 0 1 auto !important;
+                white-space: nowrap !important;
             }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button p {
                 font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
@@ -59,6 +60,7 @@ if st.session_state.get("current_user"):
                 font-weight: 600 !important;
                 line-height: 2 !important;
                 text-align: left !important;
+                white-space: nowrap !important;
                 margin: 0 !important;
                 padding: 0 !important;
             }
