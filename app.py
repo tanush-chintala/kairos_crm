@@ -85,6 +85,16 @@ if st.session_state.get("current_user"):
                 width: 0.75rem !important;
                 height: 0.75rem !important;
             }
+            [data-testid="stSidebar"] [data-testid="stChatMessageAvatarAssistant"] {
+                background-color: #1b3d2c !important; /* Kairos deep forest green */
+            }
+            [data-testid="stSidebar"] [data-testid="stChatMessageAvatarUser"] {
+                background-color: #4c9e6b !important; /* Kairos accent green */
+            }
+            [data-testid="stSidebar"] [data-testid^="stChatMessageAvatar"] svg {
+                color: #ffffff !important;
+                fill: #ffffff !important;
+            }
             [data-testid="stSidebar"] [data-testid="stChatInput"] textarea,
             [data-testid="stSidebar"] [data-testid="stChatInput"] textarea::placeholder {
                 font-size: 0.75rem !important; /* match chat message text */
