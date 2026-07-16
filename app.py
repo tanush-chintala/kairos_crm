@@ -72,6 +72,16 @@ if st.session_state.get("current_user"):
             [data-testid="stSidebar"] [data-testid="stChatMessageContent"] p {
                 font-size: 0.875rem !important; /* match nav label: fontSizes.sm */
             }
+            [data-testid="stSidebar"] [data-testid="stChatMessage"] {
+                padding-top: 0.25rem !important;
+                padding-bottom: 0.25rem !important;
+            }
+            [data-testid="stSidebar"] div[data-testid="stChatMessage"] + div[data-testid="stChatMessage"] {
+                margin-top: 0 !important;
+            }
+            [data-testid="stSidebar"] [data-testid="stVerticalBlock"]:has(> [data-testid="stChatMessage"]) {
+                gap: 0.25rem !important;
+            }
             div.element-container:has(.user-btn-anchor) + div.element-container div.stButton button:hover {
                 background-color: rgba(182, 182, 164, 0.15) !important;
                 color: rgb(26, 26, 26) !important;
