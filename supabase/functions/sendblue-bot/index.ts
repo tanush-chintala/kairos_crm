@@ -50,6 +50,32 @@ const ACTIVITY_TYPES = [
   "No response",
   "Other",
 ];
+const LOST_REASONS = [
+  "Too expensive",
+  "Not ready for AI",
+  "Dentist/owner not interested",
+  "Office manager not interested",
+  "Uses another AI tool",
+  "Uses another patient communication tool",
+  "DSO restriction",
+  "PMS/integration concern",
+  "Bad timing",
+  "No response",
+  "Other",
+];
+const COMPETITOR_TOOLS = [
+  "Weave",
+  "Adit",
+  "Dentina",
+  "NexHealth",
+  "Mango",
+  "Dental Intelligence",
+  "Patient Prism",
+  "None / front desk only",
+  "Unknown",
+];
+const DECISION_MAKER_REACHED = ["Unknown", "Yes", "No"];
+const DEMO_STATUSES = ["Scheduled", "Completed", "No-show", "Rescheduled"];
 
 const ACCOUNT_SUMMARY_COLS =
   "id, practice_name, city, pipeline_stage, kairos_owner_id, next_action, next_action_due_date, last_action_date";
@@ -255,24 +281,51 @@ const TOOL_DECLARATIONS = [
   {
     name: "update_account",
     description:
-      "Update fields on an account directly (stage change, contact info, decision maker, etc). Do NOT use this for next_action changes that stem from an activity — log_activity handles those.",
+      "Update any field on an existing account directly (stage change, contact info, decision maker, current tool, etc). Set every field the message gives you a basis for, not just the one the user named. Do NOT use this for next_action changes that stem from an activity the user is reporting — log_activity handles those.",
     parameters: {
       type: "OBJECT",
       properties: {
         account_id: { type: "INTEGER" },
-        pipeline_stage: { type: "STRING", description: `One of: ${PIPELINE_STAGES.join(", ")}` },
-        next_action: { type: "STRING" },
-        next_action_due_date: { type: "STRING", description: "YYYY-MM-DD" },
-        best_contact: { type: "STRING" },
-        decision_maker: { type: "STRING" },
-        decision_maker_reached: { type: "STRING", description: "Unknown, Yes, or No" },
-        lost_reason: { type: "STRING" },
-        practice_phone: { type: "STRING" },
-        practice_email: { type: "STRING" },
+        pipeline_stage: {
+          type: "STRING",
+          description: `Current stage in the sales pipeline. One of: ${PIPELINE_STAGES.join(", ")}.`,
+        },
+        next_action: { type: "STRING", description: "The single next step to take. Only set here for a standalone correction; otherwise use log_activity." },
+        next_action_due_date: { type: "STRING", description: "Due date of the next action, YYYY-MM-DD." },
+        best_contact: {
+          type: "STRING",
+          description: "Name of the primary day-to-day contact at the practice (often the office manager / front-desk lead). If only one person has been named or spoken to, that person is the best contact.",
+        },
+        best_contact_email: { type: "STRING", description: "Email of the best-contact person specifically (not the general office email)." },
+        best_contact_phone: { type: "STRING", description: "Direct phone of the best-contact person specifically." },
+        decision_maker: {
+          type: "STRING",
+          description: "Name of the person with buying authority, usually the dentist / practice owner. May be the same person as best_contact if that person decides.",
+        },
+        decision_maker_email: { type: "STRING", description: "Email of the decision maker specifically." },
+        decision_maker_phone: { type: "STRING", description: "Direct phone of the decision maker specifically." },
+        decision_maker_reached: {
+          type: "STRING",
+          description: `Whether the decision maker has actually been spoken to. One of: ${DECISION_MAKER_REACHED.join(", ")}. 'Yes' only if the owner/dentist was reached directly; 'No' if only staff/office manager were reached.`,
+        },
+        lost_reason: {
+          type: "STRING",
+          description: `Why the deal was lost. Set only when stage is Closed Lost. One of: ${LOST_REASONS.join(", ")}.`,
+        },
+        practice_phone: { type: "STRING", description: "Main office phone line for the practice." },
+        practice_email: { type: "STRING", description: "General office email (e.g. info@, staff@); NOT a specific person's email." },
+        website: { type: "STRING", description: "Practice website URL or domain." },
         city: { type: "STRING" },
-        pms: { type: "STRING" },
-        competitor_tool: { type: "STRING" },
-        initial_encounter_summary: { type: "STRING" },
+        state: { type: "STRING", description: "Two-letter state, e.g. TX." },
+        source_detail: { type: "STRING", description: "Where the lead came from, e.g. 'PNDC 2026', 'Apollo', a referrer's name." },
+        pms: { type: "STRING", description: "Practice-management software they currently run, e.g. Open Dental, Dentrix, Eaglesoft, Curve." },
+        competitor_tool: {
+          type: "STRING",
+          description: `Existing patient-communication / AI tool they use. One of: ${COMPETITOR_TOOLS.join(", ")}. Use 'None / front desk only' if they have none.`,
+        },
+        channel_type_id: { type: "INTEGER", description: "Reassign how this lead was sourced. Channel type ID from the list in the system prompt." },
+        kairos_owner_id: { type: "INTEGER", description: "Reassign the account's Kairos owner. User ID from the list in the system prompt." },
+        initial_encounter_summary: { type: "STRING", description: "Narrative of the first meaningful encounter. Prefer log_activity for ongoing updates; only edit this to correct the original." },
       },
       required: ["account_id"],
     },
@@ -280,28 +333,80 @@ const TOOL_DECLARATIONS = [
   {
     name: "create_account",
     description:
-      "Create a new dental practice account. Warning: This tool checks for duplicates, and the model must warn the user if a duplicate is found.",
+      "Create a new dental practice account. Populate every field the message supports (see field descriptions), not just the name. Warning: this tool checks for duplicates, and you must warn the user if a duplicate is found.",
     parameters: {
       type: "OBJECT",
       properties: {
-        practice_name: { type: "STRING", description: "Name of the dental practice (required)" },
+        practice_name: { type: "STRING", description: "Official name of the dental practice (required)." },
         city: { type: "STRING" },
-        state: { type: "STRING" },
-        practice_phone: { type: "STRING" },
-        practice_email: { type: "STRING" },
-        website: { type: "STRING" },
-        kairos_owner_id: { type: "INTEGER", description: "Default is the texting user's ID" },
-        channel_type_id: { type: "INTEGER", description: "Channel type ID from database" },
-        source_detail: { type: "STRING", description: "e.g. 'PNDC 2026', 'Apollo'" },
-        initial_encounter_summary: { type: "STRING" },
-        pipeline_stage: { type: "STRING", description: `One of: ${PIPELINE_STAGES.join(", ")}. Default is 'New Lead'` },
+        state: { type: "STRING", description: "Two-letter state, e.g. TX." },
+        practice_phone: { type: "STRING", description: "Main office phone line." },
+        practice_email: { type: "STRING", description: "General office email (e.g. info@, staff@); NOT a specific person's email." },
+        website: { type: "STRING", description: "Practice website URL or domain." },
+        kairos_owner_id: { type: "INTEGER", description: "Kairos rep who owns this account. Defaults to the texting user's ID." },
+        channel_type_id: { type: "INTEGER", description: "How the lead was sourced. Channel type ID from the list in the system prompt (e.g. a walk-in is Cold Visit or Donut Visit)." },
+        source_detail: { type: "STRING", description: "Where the lead came from, e.g. 'PNDC 2026', 'Apollo', a referrer's name." },
+        initial_encounter_summary: { type: "STRING", description: "Narrative of the first meaningful encounter: who was spoken to, what was discussed, their reaction." },
+        pipeline_stage: {
+          type: "STRING",
+          description: `Current stage. One of: ${PIPELINE_STAGES.join(", ")}. Default 'New Lead'. Infer from sentiment: a positive first meeting is 'Interested', a booked demo is 'Demo Scheduled'.`,
+        },
         next_action: { type: "STRING" },
-        next_action_due_date: { type: "STRING", description: "YYYY-MM-DD" },
-        best_contact: { type: "STRING" },
-        best_contact_email: { type: "STRING" },
-        best_contact_phone: { type: "STRING" },
+        next_action_due_date: { type: "STRING", description: "YYYY-MM-DD." },
+        best_contact: {
+          type: "STRING",
+          description: "Primary day-to-day contact (often the office manager). If only one person has been named or spoken to, that person is the best contact.",
+        },
+        best_contact_email: { type: "STRING", description: "Email of the best-contact person specifically." },
+        best_contact_phone: { type: "STRING", description: "Direct phone of the best-contact person specifically." },
+        decision_maker: { type: "STRING", description: "Person with buying authority, usually the dentist / owner. May equal best_contact." },
+        decision_maker_email: { type: "STRING", description: "Email of the decision maker specifically." },
+        decision_maker_phone: { type: "STRING", description: "Direct phone of the decision maker specifically." },
+        decision_maker_reached: {
+          type: "STRING",
+          description: `Whether the decision maker was actually spoken to. One of: ${DECISION_MAKER_REACHED.join(", ")}. 'No' if only staff were reached.`,
+        },
+        pms: { type: "STRING", description: "Practice-management software they run, e.g. Open Dental, Dentrix, Eaglesoft." },
+        competitor_tool: {
+          type: "STRING",
+          description: `Existing patient-communication / AI tool. One of: ${COMPETITOR_TOOLS.join(", ")}.`,
+        },
       },
       required: ["practice_name"],
+    },
+  },
+  {
+    name: "add_contact",
+    description:
+      "Add a person to an account's contact roster (the Contacts tab). Use when the user names a specific person at the practice with a role, email, or phone worth keeping. This is separate from the account's best_contact/decision_maker quick-reference fields — set those on the account too if this person fills that role.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        account_id: { type: "INTEGER" },
+        name: { type: "STRING", description: "Person's full name (required)." },
+        role: { type: "STRING", description: "Their role at the practice, e.g. Office Manager, Dentist/Owner, Front Desk." },
+        email: { type: "STRING" },
+        phone: { type: "STRING" },
+      },
+      required: ["account_id", "name"],
+    },
+  },
+  {
+    name: "log_demo",
+    description:
+      "Record a demo on the account's Demos tab. Use when a demo is scheduled, completed, rescheduled, or a no-show. If a demo is newly scheduled or completed, also log_activity so the timeline and next action reflect it.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        account_id: { type: "INTEGER" },
+        demo_date: { type: "STRING", description: "Date of the demo, YYYY-MM-DD." },
+        status: { type: "STRING", description: `One of: ${DEMO_STATUSES.join(", ")}. Default 'Scheduled'.` },
+        attendees: { type: "STRING", description: "Who attended or is expected to attend, e.g. 'Dr. Lee and the office manager'." },
+        pain_points: { type: "STRING", description: "Problems/needs the practice raised during the demo." },
+        objections: { type: "STRING", description: "Concerns or objections they voiced." },
+        follow_up_required: { type: "STRING", description: "What follow-up the demo surfaced." },
+      },
+      required: ["account_id"],
     },
   },
 ];
@@ -311,7 +416,7 @@ type ToolArgs = Record<string, any>;
 
 type StagedCall = { name: string; args: ToolArgs };
 
-const WRITE_TOOLS = new Set(["log_activity", "update_account", "create_account"]);
+const WRITE_TOOLS = new Set(["log_activity", "update_account", "create_account", "add_contact", "log_demo"]);
 
 // Writes are gated in code, not by the model: without commit the tool only
 // validates and stages, and the actual insert/update happens in
@@ -421,20 +526,32 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           "next_action",
           "next_action_due_date",
           "best_contact",
+          "best_contact_email",
+          "best_contact_phone",
           "decision_maker",
+          "decision_maker_email",
+          "decision_maker_phone",
           "decision_maker_reached",
           "lost_reason",
           "practice_phone",
           "practice_email",
+          "website",
           "city",
+          "state",
+          "source_detail",
           "pms",
           "competitor_tool",
+          "channel_type_id",
+          "kairos_owner_id",
           "initial_encounter_summary",
         ];
         const fields: ToolArgs = {};
         for (const k of allowed) if (args[k] !== undefined) fields[k] = args[k];
         if (fields.pipeline_stage && !PIPELINE_STAGES.includes(fields.pipeline_stage)) {
           return { error: `pipeline_stage must be one of: ${PIPELINE_STAGES.join(", ")}` };
+        }
+        if (fields.decision_maker_reached && !DECISION_MAKER_REACHED.includes(fields.decision_maker_reached)) {
+          return { error: `decision_maker_reached must be one of: ${DECISION_MAKER_REACHED.join(", ")}` };
         }
         if (fields.next_action_due_date && !isDate(fields.next_action_due_date)) {
           return { error: "next_action_due_date must be YYYY-MM-DD" };
@@ -481,10 +598,19 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           best_contact: args.best_contact ? String(args.best_contact).trim() : null,
           best_contact_email: args.best_contact_email ? String(args.best_contact_email).trim() : null,
           best_contact_phone: args.best_contact_phone ? String(args.best_contact_phone).trim() : null,
+          decision_maker: args.decision_maker ? String(args.decision_maker).trim() : null,
+          decision_maker_email: args.decision_maker_email ? String(args.decision_maker_email).trim() : null,
+          decision_maker_phone: args.decision_maker_phone ? String(args.decision_maker_phone).trim() : null,
+          decision_maker_reached: args.decision_maker_reached ? String(args.decision_maker_reached).trim() : "Unknown",
+          pms: args.pms ? String(args.pms).trim() : null,
+          competitor_tool: args.competitor_tool ? String(args.competitor_tool).trim() : null,
         };
 
         if (fields.pipeline_stage && !PIPELINE_STAGES.includes(fields.pipeline_stage)) {
           return { error: `pipeline_stage must be one of: ${PIPELINE_STAGES.join(", ")}` };
+        }
+        if (!DECISION_MAKER_REACHED.includes(fields.decision_maker_reached)) {
+          return { error: `decision_maker_reached must be one of: ${DECISION_MAKER_REACHED.join(", ")}` };
         }
         if (fields.next_action_due_date && !isDate(fields.next_action_due_date)) {
           return { error: "next_action_due_date must be YYYY-MM-DD" };
@@ -528,6 +654,73 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
         });
 
         return { ok: true, created: { id: accountId, ...fields } };
+      }
+      case "add_contact": {
+        const name = String(args.name ?? "").trim();
+        if (!args.account_id) return { error: "account_id is required" };
+        if (!name) return { error: "name is required" };
+        if (!commit) {
+          return {
+            status: "needs_confirmation",
+            note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save.",
+          };
+        }
+        const row = {
+          account_id: Number(args.account_id),
+          name,
+          role: args.role ? String(args.role).trim() : null,
+          email: args.email ? String(args.email).trim() : null,
+          phone: args.phone ? String(args.phone).trim() : null,
+        };
+        const { error } = await supabase.from("contacts").insert(row);
+        if (!error) {
+          await supabase.from("activities").insert({
+            account_id: Number(args.account_id),
+            date: chicagoToday(),
+            kairos_owner_id: userId,
+            activity_type: "Contact added",
+            summary: name,
+            is_system: true,
+          });
+        }
+        return error ? { error: error.message } : { ok: true, added: row };
+      }
+      case "log_demo": {
+        if (!args.account_id) return { error: "account_id is required" };
+        const status = args.status ? String(args.status).trim() : "Scheduled";
+        if (!DEMO_STATUSES.includes(status)) {
+          return { error: `status must be one of: ${DEMO_STATUSES.join(", ")}` };
+        }
+        if (args.demo_date && !isDate(args.demo_date)) {
+          return { error: "demo_date must be YYYY-MM-DD" };
+        }
+        if (!commit) {
+          return {
+            status: "needs_confirmation",
+            note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save.",
+          };
+        }
+        const row = {
+          account_id: Number(args.account_id),
+          demo_date: isDate(args.demo_date) ? args.demo_date : null,
+          status,
+          attendees: args.attendees ? String(args.attendees).trim() : null,
+          pain_points: args.pain_points ? String(args.pain_points).trim() : null,
+          objections: args.objections ? String(args.objections).trim() : null,
+          follow_up_required: args.follow_up_required ? String(args.follow_up_required).trim() : null,
+        };
+        const { error } = await supabase.from("demos").insert(row);
+        if (!error) {
+          await supabase.from("activities").insert({
+            account_id: Number(args.account_id),
+            date: chicagoToday(),
+            kairos_owner_id: userId,
+            activity_type: "Demo updated",
+            summary: row.demo_date ? `${status} for ${row.demo_date}` : status,
+            is_system: true,
+          });
+        }
+        return error ? { error: error.message } : { ok: true, demo: row };
       }
       default:
         return { error: `Unknown tool ${name}` };
@@ -585,6 +778,13 @@ async function executePending(userId: number, calls: StagedCall[]): Promise<stri
         if (call.args.next_action_due_date) line += ` due ${call.args.next_action_due_date}`;
       }
       lines.push(line + ".");
+    } else if (call.name === "add_contact") {
+      const role = call.args.role ? ` (${call.args.role})` : "";
+      lines.push(`Saved. Added contact ${call.args.name}${role} to ${name}.`);
+    } else if (call.name === "log_demo") {
+      const status = call.args.status ?? "Scheduled";
+      const when = call.args.demo_date ? ` for ${call.args.demo_date}` : "";
+      lines.push(`Saved. Demo ${String(status).toLowerCase()}${when} logged on ${name}.`);
     } else {
       const fields = Object.entries(call.args)
         .filter(([k]) => k !== "account_id")
@@ -610,6 +810,9 @@ function systemPrompt(
     "Always resolve an account name with find_account before reading details or editing. If multiple accounts plausibly match, list them briefly and ask which one instead of guessing.",
     "When the user reports something that happened (a call, a visit, an email, a demo), log it with log_activity and include any new next action there. Use update_account only for direct field edits like stage or contact info.",
     "To create a new dental practice account, use the create_account tool. If the user specifies an owner or channel type by name, use the corresponding ID from the lists below. Owner defaults to the texting user if unspecified.",
+    "Capture everything. These texts are field reports: extract every concrete fact and route it to the correct field instead of dumping it all into the summary. On every create_account and update_account, fill in as many fields as the message actually supports (the tool's field descriptions say what each field holds) - not just the one field the user named. Add contacts with add_contact and demos with log_demo when the message contains them. Do not narrate the fields you are setting to the user beyond the confirmation proposal.",
+    "Never invent, assume, or fill a field the message gives you no basis for - empty is always better than wrong. But DO make the obvious inferences a smart teammate would: (1) Best contact - if exactly one person at the practice has been named or spoken to, that person is the best_contact; set it. (2) Decision maker - the dentist/practice owner is the decision maker; if the user reached only staff or the office manager and not the owner, set decision_maker_reached to No; if they spoke to the owner directly, Yes. (3) A person's email/phone belongs on that person's best_contact_/decision_maker_ field; a generic office address like info@ or staff@ is the practice_email/practice_phone. (4) A named competing patient-communication tool (Weave, Adit, NexHealth, etc.) goes in competitor_tool; practice-management software (Open Dental, Dentrix, etc.) goes in pms. (5) Channel type - a walk-in or drop-by is a Cold Visit or Donut Visit, a conference lead is Conference, a referral is Referral. (6) Pipeline stage - infer from sentiment: a positive first meeting where they want to keep talking is Interested, a booked demo is Demo Scheduled, a flat rejection is Closed Lost (set a lost_reason).",
+    "When a field you inferred is a genuine judgement call rather than obvious, still set it, but note the assumption in one short line in your proposal so the user can correct it before saving.",
     "Writes are two-step and the system enforces it. When the user requests a change, call create_account, log_activity, or update_account right away with professionalized field values - the system stages the change instead of saving it and returns needs_confirmation. Then reply with one short proposal naming the account/action and quoting exactly what will be saved, ending with 'Reply yes to save.'",
     "Duplicate check on account creation: When calling create_account, if the tool response returns a list of duplicates, you must warn the user of the duplicates, list them briefly (with their practice name and city), and ask if they still want to save this new account.",
     "You cannot save anything yourself. The system saves the staged change only when the user replies with an affirmative, and it sends its own saved-confirmation text. Never claim that something was logged, saved, or updated. If the user replies with corrections instead of yes, call the tool again with corrected values and propose again.",
@@ -840,7 +1043,7 @@ Deno.serve(async (req) => {
     contents.push({
       role: "user",
       parts: [{
-        text: "SYSTEM: Your proposal was not staged because you did not call the tool. Call log_activity, update_account, or create_account now with exactly the values you proposed, then repeat the proposal.",
+        text: "SYSTEM: Your proposal was not staged because you did not call the tool. Call the matching write tool (log_activity, update_account, create_account, add_contact, or log_demo) now with exactly the values you proposed, then repeat the proposal.",
       }],
     });
     const retry = await runAgent(sender.id, sender.name, contents, users ?? [], channelTypes ?? []);
