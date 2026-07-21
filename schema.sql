@@ -114,24 +114,43 @@ create table cadence_steps (
     email_template_id bigint references email_templates(id) on delete set null
 );
 
+-- Named, resumable chat threads. Phone/iMessage traffic always lands in the
+-- user's single default "Texts" session; the dashboard can spin up more.
+create table chat_sessions (
+    id bigint generated always as identity primary key,
+    user_id bigint not null references users(id) on delete cascade,
+    title text,
+    is_default boolean not null default false,
+    created_at timestamptz not null default now(),
+    last_message_at timestamptz not null default now()
+);
+
+create index chat_sessions_user_idx on chat_sessions (user_id, last_message_at desc);
+create unique index chat_sessions_one_default on chat_sessions (user_id) where is_default;
+
 -- Rolling conversation history for the SendBlue text bot (supabase/functions/
 -- sendblue-bot). Only user text and final bot replies are stored, not tool calls.
 create table bot_messages (
     id bigint generated always as identity primary key,
     user_id bigint not null references users(id) on delete cascade,
+    session_id bigint references chat_sessions(id) on delete cascade,
     role text not null check (role in ('user', 'model')),
     content text not null,
     created_at timestamptz not null default now()
 );
 
 create index bot_messages_user_idx on bot_messages (user_id, created_at desc);
+create index bot_messages_session_idx on bot_messages (session_id, id);
 
 -- Staged bot edits awaiting the user's yes-by-text. The edge function, not the
--- model, decides when these execute (code-enforced confirmation gate).
+-- model, decides when these execute (code-enforced confirmation gate). Keyed per
+-- session so a "yes" in one chat can't confirm a write staged in another.
 create table bot_pending_writes (
-    user_id bigint primary key references users(id) on delete cascade,
+    user_id bigint not null references users(id) on delete cascade,
+    session_id bigint not null references chat_sessions(id) on delete cascade,
     calls jsonb not null,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    primary key (user_id, session_id)
 );
 
 create index cadence_steps_cadence_idx on cadence_steps (cadence_id, step_order);

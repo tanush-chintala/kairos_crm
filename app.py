@@ -272,9 +272,9 @@ def _render_messages(messages: list[dict]) -> None:
 # phone without rerunning the main page (which would blow away unsaved edit
 # forms — see CLAUDE.md). A send does a full st.rerun so page views reflect writes.
 @st.fragment(run_every="30s")
-def _sidebar_chat(user_id: int) -> None:
+def _sidebar_chat(session_id: int) -> None:
     chat_container = st.container(height=400)
-    messages = queries.list_bot_messages(user_id)
+    messages = queries.list_bot_messages(session_id)
     with chat_container:
         if not messages:
             st.caption("No messages yet. Try asking 'what's due today?'")
@@ -283,10 +283,11 @@ def _sidebar_chat(user_id: int) -> None:
 
     if prompt := st.chat_input("Message Kairos Bot..."):
         url = os.environ.get("SUPABASE_URL", "") + "/functions/v1/sendblue-bot?debug=1&token=" + os.environ.get("BOT_WEBHOOK_TOKEN", "")
+        payload = {"user_id": st.session_state["current_user"]["id"], "session_id": session_id, "content": prompt}
         with chat_container:
             with st.spinner("Thinking..."):
                 try:
-                    resp = requests.post(url, json={"user_id": user_id, "content": prompt}, timeout=30)
+                    resp = requests.post(url, json=payload, timeout=30)
                     resp.raise_for_status()
                     nav = (resp.json() or {}).get("nav")
                     st.session_state["chat_nav"] = nav if nav and nav.get("page") else None
@@ -309,7 +310,31 @@ _CHAT_NAV_PAGES = {
 }
 
 with st.sidebar:
-    _sidebar_chat(st.session_state["current_user"]["id"])
+    _uid = st.session_state["current_user"]["id"]
+    _sessions = queries.list_chat_sessions(_uid) or [queries.get_or_create_default_session(_uid)]
+    _session_ids = [s["id"] for s in _sessions]
+    if st.session_state.get("current_session_id") not in _session_ids:
+        st.session_state["current_session_id"] = _session_ids[0]
+    _labels = {s["id"]: (s["title"] or "New chat") for s in _sessions}
+
+    _pick_col, _new_col = st.columns([5, 1], vertical_alignment="center")
+    with _pick_col:
+        _picked = st.selectbox(
+            "Chat session", _session_ids, format_func=lambda i: _labels.get(i, "New chat"),
+            index=_session_ids.index(st.session_state["current_session_id"]),
+            label_visibility="collapsed",
+        )
+    if _picked != st.session_state["current_session_id"]:
+        st.session_state["current_session_id"] = _picked
+        st.session_state["chat_nav"] = None
+        st.rerun()
+    with _new_col:
+        if st.button("", icon=":material/add:", help="Start a new chat", key="new_chat_btn"):
+            st.session_state["current_session_id"] = queries.create_chat_session(_uid)["id"]
+            st.session_state["chat_nav"] = None
+            st.rerun()
+
+    _sidebar_chat(st.session_state["current_session_id"])
     # After a chatbot save, offer a jump to what changed (Issue 3: the user
     # shouldn't have to trust the write happened — let them go verify it).
     chat_nav = st.session_state.get("chat_nav")

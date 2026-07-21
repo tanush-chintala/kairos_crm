@@ -740,24 +740,43 @@ const AFFIRMATIVE_RE =
 
 const PENDING_TTL_MS = 60 * 60 * 1000;
 
-async function loadPending(userId: number): Promise<StagedCall[]> {
+async function loadPending(userId: number, sessionId: number): Promise<StagedCall[]> {
   const { data } = await supabase
     .from("bot_pending_writes")
     .select("calls, created_at")
     .eq("user_id", userId)
+    .eq("session_id", sessionId)
     .maybeSingle();
   if (!data || Date.now() - new Date(data.created_at).getTime() > PENDING_TTL_MS) return [];
   return data.calls as StagedCall[];
 }
 
-async function savePending(userId: number, calls: StagedCall[]) {
+async function savePending(userId: number, sessionId: number, calls: StagedCall[]) {
   await supabase
     .from("bot_pending_writes")
-    .upsert({ user_id: userId, calls, created_at: new Date().toISOString() });
+    .upsert({ user_id: userId, session_id: sessionId, calls, created_at: new Date().toISOString() });
 }
 
-async function clearPending(userId: number) {
-  await supabase.from("bot_pending_writes").delete().eq("user_id", userId);
+async function clearPending(userId: number, sessionId: number) {
+  await supabase.from("bot_pending_writes").delete().eq("user_id", userId).eq("session_id", sessionId);
+}
+
+// Phone/iMessage traffic has no session UI, so it always lands in the user's
+// single default "Texts" session; the dashboard passes an explicit session_id.
+async function defaultSessionId(userId: number): Promise<number> {
+  const { data } = await supabase
+    .from("chat_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("is_default", true)
+    .maybeSingle();
+  if (data) return data.id;
+  const { data: created } = await supabase
+    .from("chat_sessions")
+    .insert({ user_id: userId, title: "Texts", is_default: true })
+    .select("id")
+    .single();
+  return created!.id;
 }
 
 async function accountName(id: number): Promise<string> {
@@ -963,25 +982,30 @@ function sendTypingIndicator(number: string, fromNumber: string) {
   }).catch(() => {});
 }
 
-async function loadHistory(userId: number): Promise<Content[]> {
-  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  // Order by id, not created_at: the user/model pair is inserted in one
-  // statement and can share a timestamp, which scrambles the turn order.
+async function loadHistory(sessionId: number): Promise<Content[]> {
+  // A session is already a bounded conversation, so scope context to it. Order
+  // by id, not created_at: the user/model pair is inserted in one statement and
+  // can share a timestamp, which scrambles the turn order.
   const { data } = await supabase
     .from("bot_messages")
     .select("role, content")
-    .eq("user_id", userId)
-    .gte("created_at", since)
+    .eq("session_id", sessionId)
     .order("id", { ascending: false })
     .limit(12);
   return (data ?? []).reverse().map((m) => ({ role: m.role, parts: [{ text: m.content }] }));
 }
 
-async function saveExchange(userId: number, userText: string, reply: string) {
+async function saveExchange(userId: number, sessionId: number, userText: string, reply: string) {
   await supabase.from("bot_messages").insert([
-    { user_id: userId, role: "user", content: userText },
-    { user_id: userId, role: "model", content: reply },
+    { user_id: userId, session_id: sessionId, role: "user", content: userText },
+    { user_id: userId, session_id: sessionId, role: "model", content: reply },
   ]);
+  const patch: Record<string, unknown> = { last_message_at: new Date().toISOString() };
+  const { data: sess } = await supabase.from("chat_sessions").select("title").eq("id", sessionId).maybeSingle();
+  if (sess && !sess.title) {
+    patch.title = userText.length > 40 ? userText.slice(0, 40).trim() + "..." : userText.trim();
+  }
+  await supabase.from("chat_sessions").update(patch).eq("id", sessionId);
 }
 
 Deno.serve(async (req) => {
@@ -1023,30 +1047,33 @@ Deno.serve(async (req) => {
   const lineNumber = String(payload.sendblue_number ?? payload.to_number ?? "");
   sendTypingIndicator(fromNumber, lineNumber);
   const sender = user;
+  // The dashboard passes an explicit chat session; phone traffic has none and
+  // falls back to the user's default "Texts" session.
+  const sessionId = payload.session_id ? Number(payload.session_id) : await defaultSessionId(sender.id);
 
   async function respond(reply: string, nav: NavTarget | null = null): Promise<Response> {
     if (debug) {
-      await saveExchange(sender.id, content, reply);
+      await saveExchange(sender.id, sessionId, content, reply);
       return new Response(JSON.stringify({ user: sender.name, reply, nav }), {
         headers: { "Content-Type": "application/json" },
       });
     }
-    await Promise.all([sendText(fromNumber, reply, lineNumber), saveExchange(sender.id, content, reply)]);
+    await Promise.all([sendText(fromNumber, reply, lineNumber), saveExchange(sender.id, sessionId, content, reply)]);
     return new Response("ok");
   }
 
   // The confirmation gate lives here, not in the model: an affirmative reply
   // executes the staged writes deterministically; anything else discards them
   // and falls through to the model, which can re-propose with corrections.
-  const pending = await loadPending(sender.id);
+  const pending = await loadPending(sender.id, sessionId);
   if (pending.length && AFFIRMATIVE_RE.test(content)) {
     const { text, nav } = await executePending(sender.id, pending);
-    await clearPending(sender.id);
+    await clearPending(sender.id, sessionId);
     return await respond(text, nav);
   }
-  if (pending.length) await clearPending(sender.id);
+  if (pending.length) await clearPending(sender.id, sessionId);
 
-  const contents = await loadHistory(sender.id);
+  const contents = await loadHistory(sessionId);
   contents.push({ role: "user", parts: [{ text: content }] });
   let { text: reply, staged } = await runAgent(sender.id, sender.name, contents, users ?? [], channelTypes ?? []);
 
@@ -1070,6 +1097,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (staged.length) await savePending(sender.id, staged);
+  if (staged.length) await savePending(sender.id, sessionId, staged);
   return await respond(reply);
 });

@@ -207,10 +207,44 @@ def get_distinct_column_values(table: str, column: str) -> list[str]:
     return sorted(list(vals))
 
 
-def list_bot_messages(user_id: int, limit: int = 20) -> list[dict]:
+def list_bot_messages(session_id: int, limit: int = 50) -> list[dict]:
     data = (
         get_client().table("bot_messages").select("*")
-        .eq("user_id", user_id)
+        .eq("session_id", session_id)
         .order("id", desc=True).limit(limit).execute().data
     )
     return list(reversed(data))
+
+
+def list_chat_sessions(user_id: int) -> list[dict]:
+    return (
+        get_client().table("chat_sessions").select("*")
+        .eq("user_id", user_id)
+        .order("last_message_at", desc=True).execute().data
+    )
+
+
+def get_or_create_default_session(user_id: int) -> dict:
+    existing = (
+        get_client().table("chat_sessions").select("*")
+        .eq("user_id", user_id).eq("is_default", True).limit(1).execute().data
+    )
+    if existing:
+        return existing[0]
+    return (
+        get_client().table("chat_sessions")
+        .insert({"user_id": user_id, "title": "Texts", "is_default": True})
+        .execute().data[0]
+    )
+
+
+def create_chat_session(user_id: int, title: str | None = None) -> dict:
+    return (
+        get_client().table("chat_sessions")
+        .insert({"user_id": user_id, "title": title})
+        .execute().data[0]
+    )
+
+
+def delete_chat_session(session_id: int) -> None:
+    get_client().table("chat_sessions").delete().eq("id", session_id).execute()
