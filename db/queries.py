@@ -246,5 +246,9 @@ def create_chat_session(user_id: int, title: str | None = None) -> dict:
     )
 
 
+def rename_chat_session(session_id: int, title: str | None) -> None:
+    get_client().table("chat_sessions").update({"title": title}).eq("id", session_id).execute()
+
+
 def delete_chat_session(session_id: int) -> None:
     get_client().table("chat_sessions").delete().eq("id", session_id).execute()

@@ -317,7 +317,7 @@ with st.sidebar:
         st.session_state["current_session_id"] = _session_ids[0]
     _labels = {s["id"]: (s["title"] or "New chat") for s in _sessions}
 
-    _pick_col, _new_col = st.columns([5, 1], vertical_alignment="center")
+    _pick_col, _new_col, _menu_col = st.columns([4, 1, 1], vertical_alignment="center")
     with _pick_col:
         _picked = st.selectbox(
             "Chat session", _session_ids, format_func=lambda i: _labels.get(i, "New chat"),
@@ -333,6 +333,20 @@ with st.sidebar:
             st.session_state["current_session_id"] = queries.create_chat_session(_uid)["id"]
             st.session_state["chat_nav"] = None
             st.rerun()
+    _current = next((s for s in _sessions if s["id"] == st.session_state["current_session_id"]), _sessions[0])
+    with _menu_col:
+        with st.popover("", icon=":material/more_vert:", help="Rename or delete this chat", use_container_width=True):
+            _new_title = st.text_input("Rename chat", value=_current.get("title") or "", key=f"rename_input_{_current['id']}")
+            if st.button("Rename", icon=":material/edit:", use_container_width=True, key="rename_btn"):
+                queries.rename_chat_session(_current["id"], _new_title.strip() or None)
+                st.rerun()
+            if _current.get("is_default"):
+                st.caption("The Texts chat can't be deleted — phone messages land here.")
+            elif st.button("Delete chat", icon=":material/delete:", use_container_width=True, key="delete_btn"):
+                queries.delete_chat_session(_current["id"])
+                st.session_state.pop("current_session_id", None)
+                st.session_state["chat_nav"] = None
+                st.rerun()
 
     _sidebar_chat(st.session_state["current_session_id"])
     # After a chatbot save, offer a jump to what changed (Issue 3: the user
