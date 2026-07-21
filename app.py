@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 import requests
 import os
@@ -281,6 +282,34 @@ def _sidebar_chat(session_id: int) -> None:
         else:
             _render_messages(messages)
 
+    # Pin the scroll to the newest message on load, session switch, and new
+    # messages — but not on every 30s poll, so reading history isn't yanked.
+    scroll_sig = f"{session_id}:{messages[-1]['id'] if messages else 0}"
+    if messages and st.session_state.get("_chat_scroll_sig") != scroll_sig:
+        st.session_state["_chat_scroll_sig"] = scroll_sig
+        components.html(
+            """
+            <script>
+            (function () {
+              const doc = window.parent.document;
+              let tries = 0;
+              function toBottom() {
+                tries++;
+                const chat = doc.querySelector('.kb-chat');
+                if (chat) {
+                  let el = chat.parentElement;
+                  while (el && el.scrollHeight <= el.clientHeight + 2) el = el.parentElement;
+                  if (el) { el.scrollTop = el.scrollHeight; return; }
+                }
+                if (tries < 12) setTimeout(toBottom, 80);
+              }
+              toBottom();
+            })();
+            </script>
+            """,
+            height=0,
+        )
+
     if prompt := st.chat_input("Message Kairos Bot..."):
         url = os.environ.get("SUPABASE_URL", "") + "/functions/v1/sendblue-bot?debug=1&token=" + os.environ.get("BOT_WEBHOOK_TOKEN", "")
         payload = {"user_id": st.session_state["current_user"]["id"], "session_id": session_id, "content": prompt}
@@ -313,8 +342,17 @@ with st.sidebar:
     _uid = st.session_state["current_user"]["id"]
     _sessions = queries.list_chat_sessions(_uid) or [queries.get_or_create_default_session(_uid)]
     _session_ids = [s["id"] for s in _sessions]
+    # session_state survives page switches; the cookie restores the last-opened
+    # chat across a full browser reload (which starts a fresh session).
     if st.session_state.get("current_session_id") not in _session_ids:
-        st.session_state["current_session_id"] = _session_ids[0]
+        _saved = controller.get("kairos_session_id")
+        st.session_state["current_session_id"] = (
+            int(_saved) if _saved and str(_saved).isdigit() and int(_saved) in _session_ids
+            else _session_ids[0]
+        )
+    if st.session_state.get("_cookie_session_written") != st.session_state["current_session_id"]:
+        controller.set("kairos_session_id", str(st.session_state["current_session_id"]))
+        st.session_state["_cookie_session_written"] = st.session_state["current_session_id"]
     _labels = {s["id"]: (s["title"] or "New chat") for s in _sessions}
 
     _pick_col, _new_col, _menu_col = st.columns([4, 1, 1], vertical_alignment="center")
