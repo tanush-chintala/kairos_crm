@@ -416,6 +416,11 @@ type ToolArgs = Record<string, any>;
 
 type StagedCall = { name: string; args: ToolArgs };
 
+// Where the dashboard should jump after a write. `page` is a logical page key the
+// dashboard maps to a route — not hard-coded to accounts, so future non-account
+// tools can point elsewhere. account_id is set when the target is one account.
+type NavTarget = { page: string; label: string; account_id: number | null };
+
 const WRITE_TOOLS = new Set(["log_activity", "update_account", "create_account", "add_contact", "log_demo"]);
 
 // Writes are gated in code, not by the model: without commit the tool only
@@ -763,9 +768,9 @@ async function accountName(id: number): Promise<string> {
 async function executePending(
   userId: number,
   calls: StagedCall[],
-): Promise<{ text: string; nav: { id: number; name: string } | null }> {
+): Promise<{ text: string; nav: NavTarget | null }> {
   const lines: string[] = [];
-  let nav: { id: number; name: string } | null = null;
+  let nav: NavTarget | null = null;
   for (const call of calls) {
     const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
     const name = call.name === "create_account"
@@ -800,7 +805,7 @@ async function executePending(
       const navId = call.name === "create_account"
         ? Number((result as ToolArgs)?.created?.id)
         : Number(call.args.account_id);
-      if (navId) nav = { id: navId, name };
+      if (navId) nav = { page: "accounts", label: name, account_id: navId };
     }
   }
   return { text: lines.join("\n"), nav };
@@ -1019,7 +1024,7 @@ Deno.serve(async (req) => {
   sendTypingIndicator(fromNumber, lineNumber);
   const sender = user;
 
-  async function respond(reply: string, nav: { id: number; name: string } | null = null): Promise<Response> {
+  async function respond(reply: string, nav: NavTarget | null = null): Promise<Response> {
     if (debug) {
       await saveExchange(sender.id, content, reply);
       return new Response(JSON.stringify({ user: sender.name, reply, nav }), {

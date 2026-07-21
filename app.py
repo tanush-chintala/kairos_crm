@@ -289,22 +289,35 @@ def _sidebar_chat(user_id: int) -> None:
                     resp = requests.post(url, json={"user_id": user_id, "content": prompt}, timeout=30)
                     resp.raise_for_status()
                     nav = (resp.json() or {}).get("nav")
-                    st.session_state["chat_nav"] = nav if nav and nav.get("id") else None
+                    st.session_state["chat_nav"] = nav if nav and nav.get("page") else None
                 except Exception as e:
                     body = getattr(getattr(e, "response", None), "text", "")
                     st.error(f"Bot error: {e}" + (f" - {body}" if body else ""))
         st.rerun()
 
 
+# Logical page keys the bot's nav payload can target — kept in sync with the
+# st.navigation pages above so a write on any page (not just accounts) can offer
+# a jump. account_id, when present, deep-links straight to that account's detail.
+_CHAT_NAV_PAGES = {
+    "dashboard": "views/dashboard.py",
+    "overview": "views/overview.py",
+    "accounts": "views/accounts.py",
+    "email_templates": "views/email_templates.py",
+    "csv_import": "views/csv_import.py",
+    "admin": "views/admin.py",
+}
+
 with st.sidebar:
     _sidebar_chat(st.session_state["current_user"]["id"])
-    # After a chatbot save, offer a jump to the affected account (Issue 3: the
-    # user shouldn't have to trust the write happened — let them go verify it).
+    # After a chatbot save, offer a jump to what changed (Issue 3: the user
+    # shouldn't have to trust the write happened — let them go verify it).
     chat_nav = st.session_state.get("chat_nav")
-    if chat_nav:
-        if st.button(f"View {chat_nav['name']}", icon=":material/open_in_new:", use_container_width=True, key="chat_nav_view"):
-            st.session_state["selected_account_id"] = chat_nav["id"]
+    if chat_nav and chat_nav.get("page") in _CHAT_NAV_PAGES:
+        if st.button(f"View {chat_nav['label']}", icon=":material/open_in_new:", use_container_width=True, key="chat_nav_view"):
+            if chat_nav.get("account_id"):
+                st.session_state["selected_account_id"] = chat_nav["account_id"]
             st.session_state["chat_nav"] = None
-            st.switch_page("views/accounts.py")
+            st.switch_page(_CHAT_NAV_PAGES[chat_nav["page"]])
 
 pages.run()
