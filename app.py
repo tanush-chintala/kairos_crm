@@ -2,7 +2,10 @@ import streamlit as st
 from dotenv import load_dotenv
 import requests
 import os
+import html
+from datetime import datetime
 from streamlit_cookies_controller import CookieController
+from utils.tz import CENTRAL
 
 load_dotenv()
 
@@ -176,6 +179,18 @@ if st.session_state.get("current_user"):
                 border: none !important;
                 background: transparent !important;
             }
+            [data-testid="stSidebar"] {
+                min-width: 23rem !important;
+                width: 23rem !important;
+            }
+            .kb-chat { display: flex; flex-direction: column; gap: 0.5rem; }
+            .kb-msg { display: flex; gap: 0.5rem; align-items: stretch; }
+            .kb-pill { width: 3px; border-radius: 9999px; flex-shrink: 0; }
+            .kb-msg.kb-user .kb-pill { background-color: #4c9e6b; } /* Kairos accent green */
+            .kb-msg.kb-bot .kb-pill { background-color: #1b3d2c; } /* Kairos deep forest green */
+            .kb-body { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 0; }
+            .kb-text { font-size: 0.75rem; line-height: 1.45; color: #1a1a1a; white-space: pre-wrap; word-break: break-word; }
+            .kb-time { font-size: 0.625rem; color: rgba(26, 26, 26, 0.45); }
             </style>
             <div class="user-btn-anchor"></div>
         """, unsafe_allow_html=True)
@@ -229,34 +244,57 @@ if st.session_state.get("current_user") is None:
             st.rerun()
     st.stop()
 
-with st.sidebar:
+def _chat_timestamp(created_at: str) -> str:
+    try:
+        dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).astimezone(CENTRAL)
+    except (ValueError, TypeError):
+        return ""
+    if dt.date() == datetime.now(CENTRAL).date():
+        return dt.strftime("%-I:%M %p")
+    return dt.strftime("%b %-d, %-I:%M %p")
+
+
+def _render_messages(messages: list[dict]) -> None:
+    rows = []
+    for msg in messages:
+        css = "kb-user" if msg["role"] == "user" else "kb-bot"
+        text = html.escape(msg.get("content") or "").replace("\n", "<br>")
+        ts = _chat_timestamp(msg.get("created_at", ""))
+        rows.append(
+            f'<div class="kb-msg {css}"><div class="kb-pill"></div>'
+            f'<div class="kb-body"><div class="kb-text">{text}</div>'
+            f'<div class="kb-time">{ts}</div></div></div>'
+        )
+    st.markdown('<div class="kb-chat">' + "".join(rows) + "</div>", unsafe_allow_html=True)
+
+
+# The chat is a fragment so run_every polls Supabase for messages texted from a
+# phone without rerunning the main page (which would blow away unsaved edit
+# forms — see CLAUDE.md). A send does a full st.rerun so page views reflect writes.
+@st.fragment(run_every="30s")
+def _sidebar_chat(user_id: int) -> None:
     chat_container = st.container(height=400)
-    
-    current_user_id = st.session_state['current_user']['id']
-    messages = queries.list_bot_messages(current_user_id)
-    
+    messages = queries.list_bot_messages(user_id)
     with chat_container:
         if not messages:
             st.caption("No messages yet. Try asking 'what's due today?'")
-        for msg in messages:
-            role = "user" if msg["role"] == "user" else "assistant"
-            st.chat_message(role).write(msg["content"])
-            
+        else:
+            _render_messages(messages)
+
     if prompt := st.chat_input("Message Kairos Bot..."):
         url = os.environ.get("SUPABASE_URL", "") + "/functions/v1/sendblue-bot?debug=1&token=" + os.environ.get("BOT_WEBHOOK_TOKEN", "")
-        payload = {
-            "user_id": current_user_id,
-            "content": prompt
-        }
         with chat_container:
-            st.chat_message("user").write(prompt)
             with st.spinner("Thinking..."):
                 try:
-                    resp = requests.post(url, json=payload, timeout=30)
+                    resp = requests.post(url, json={"user_id": user_id, "content": prompt}, timeout=30)
                     resp.raise_for_status()
                 except Exception as e:
                     body = getattr(getattr(e, "response", None), "text", "")
                     st.error(f"Bot error: {e}" + (f" - {body}" if body else ""))
         st.rerun()
+
+
+with st.sidebar:
+    _sidebar_chat(st.session_state["current_user"]["id"])
 
 pages.run()
