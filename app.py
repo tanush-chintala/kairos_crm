@@ -288,6 +288,8 @@ def _sidebar_chat(user_id: int) -> None:
                 try:
                     resp = requests.post(url, json={"user_id": user_id, "content": prompt}, timeout=30)
                     resp.raise_for_status()
+                    nav = (resp.json() or {}).get("nav")
+                    st.session_state["chat_nav"] = nav if nav and nav.get("id") else None
                 except Exception as e:
                     body = getattr(getattr(e, "response", None), "text", "")
                     st.error(f"Bot error: {e}" + (f" - {body}" if body else ""))
@@ -296,5 +298,13 @@ def _sidebar_chat(user_id: int) -> None:
 
 with st.sidebar:
     _sidebar_chat(st.session_state["current_user"]["id"])
+    # After a chatbot save, offer a jump to the affected account (Issue 3: the
+    # user shouldn't have to trust the write happened — let them go verify it).
+    chat_nav = st.session_state.get("chat_nav")
+    if chat_nav:
+        if st.button(f"View {chat_nav['name']}", icon=":material/open_in_new:", use_container_width=True, key="chat_nav_view"):
+            st.session_state["selected_account_id"] = chat_nav["id"]
+            st.session_state["chat_nav"] = None
+            st.switch_page("views/accounts.py")
 
 pages.run()

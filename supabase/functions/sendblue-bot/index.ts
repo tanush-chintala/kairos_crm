@@ -760,8 +760,12 @@ async function accountName(id: number): Promise<string> {
   return data?.practice_name ?? `account ${id}`;
 }
 
-async function executePending(userId: number, calls: StagedCall[]): Promise<string> {
+async function executePending(
+  userId: number,
+  calls: StagedCall[],
+): Promise<{ text: string; nav: { id: number; name: string } | null }> {
   const lines: string[] = [];
+  let nav: { id: number; name: string } | null = null;
   for (const call of calls) {
     const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
     const name = call.name === "create_account"
@@ -792,8 +796,14 @@ async function executePending(userId: number, calls: StagedCall[]): Promise<stri
         .join(", ");
       lines.push(`Saved. Updated ${name} - ${fields}.`);
     }
+    if (!result?.error) {
+      const navId = call.name === "create_account"
+        ? Number((result as ToolArgs)?.created?.id)
+        : Number(call.args.account_id);
+      if (navId) nav = { id: navId, name };
+    }
   }
-  return lines.join("\n");
+  return { text: lines.join("\n"), nav };
 }
 
 function systemPrompt(
@@ -1009,10 +1019,10 @@ Deno.serve(async (req) => {
   sendTypingIndicator(fromNumber, lineNumber);
   const sender = user;
 
-  async function respond(reply: string): Promise<Response> {
+  async function respond(reply: string, nav: { id: number; name: string } | null = null): Promise<Response> {
     if (debug) {
       await saveExchange(sender.id, content, reply);
-      return new Response(JSON.stringify({ user: sender.name, reply }), {
+      return new Response(JSON.stringify({ user: sender.name, reply, nav }), {
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -1025,9 +1035,9 @@ Deno.serve(async (req) => {
   // and falls through to the model, which can re-propose with corrections.
   const pending = await loadPending(sender.id);
   if (pending.length && AFFIRMATIVE_RE.test(content)) {
-    const reply = await executePending(sender.id, pending);
+    const { text, nav } = await executePending(sender.id, pending);
     await clearPending(sender.id);
-    return await respond(reply);
+    return await respond(text, nav);
   }
   if (pending.length) await clearPending(sender.id);
 
