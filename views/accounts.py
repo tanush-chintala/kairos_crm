@@ -29,87 +29,59 @@ def _id_options(rows: list[dict], keep_id=None) -> list:
     return [None] + ids
 
 
+_ADD_HELP = "Not in the list? Type it here and pick the \"Add\" option that appears."
+
+
 def _owner_select(label: str, key: str, current_id=None):
+    """Returns an existing user id, or a typed-in name as a str for the caller
+    to create on submit."""
     default = current_id if current_id is not None else st.session_state["current_user"]["id"]
     options = _id_options(_users_all, keep_id=current_id)
-    options.append("ADD_NEW")
-    
-    def format_fn(i):
-        if i == "ADD_NEW":
-            return "+ Add custom owner..."
-        return _user_name.get(i, "—") if i else "—"
-
     index = options.index(default) if default in options else 0
-    selected = st.selectbox(
+    return st.selectbox(
         label, options, index=index, key=key,
-        format_func=format_fn,
+        format_func=lambda i: i if isinstance(i, str) else (_user_name.get(i, "—") if i else "—"),
+        accept_new_options=True,
+        help=_ADD_HELP,
     )
-    if selected == "ADD_NEW":
-        custom_val = st.text_input("New owner name", key=f"{key}_custom_val")
-        return "ADD_NEW", custom_val
-    return selected, None
 
 
 def _channel_select(label: str, key: str, current_id=None):
     options = _id_options(_channels_all, keep_id=current_id)
-    options.append("ADD_NEW")
-    
-    def format_fn(i):
-        if i == "ADD_NEW":
-            return "+ Add custom channel..."
-        return _channel_name.get(i, "—") if i else "—"
-
     index = options.index(current_id) if current_id in options else 0
-    selected = st.selectbox(
+    return st.selectbox(
         label, options, index=index, key=key,
-        format_func=format_fn,
+        format_func=lambda i: i if isinstance(i, str) else (_channel_name.get(i, "—") if i else "—"),
+        accept_new_options=True,
+        help=_ADD_HELP,
     )
-    if selected == "ADD_NEW":
-        custom_val = st.text_input("New channel type name", key=f"{key}_custom_val")
-        return "ADD_NEW", custom_val
-    return selected, None
 
 
 def _nullable_select(label: str, values: list[str], key: str, current=None):
-    options = ["—"] + list(values) + ["+ Add custom..."]
+    options = ["—"] + list(values)
     if current and current not in options:
-        options.insert(-1, current)
+        options.append(current)
     index = options.index(current) if current in options else 0
-    picked = st.selectbox(label, options, index=index, key=key)
-    if picked == "+ Add custom...":
-        custom_val = st.text_input(f"New {label.lower()}", key=f"{key}_custom_val")
-        if custom_val.strip():
-            return custom_val.strip()
+    picked = st.selectbox(
+        label, options, index=index, key=key,
+        accept_new_options=True, help=_ADD_HELP,
+    )
+    if picked == "—" or not picked:
         return None
-    return None if picked == "—" else picked
+    return picked.strip()
 
 
-def _stage_select(label: str, values: list[str], key: str, current=None):
-    options = list(values) + ["+ Add custom stage..."]
-    if current and current not in options:
-        options.insert(-1, current)
-    default_val = current or "New Lead"
-    index = options.index(default_val) if default_val in options else 0
-    picked = st.selectbox(label, options, index=index, key=key)
-    if picked == "+ Add custom stage...":
-        custom_val = st.text_input(f"New stage name", key=f"{key}_custom_val")
-        if custom_val.strip():
-            return custom_val.strip()
-        return default_val
-    return picked
 def _custom_select(label: str, values: list[str], key: str, current=None, default_val=None):
-    options = list(values) + ["+ Add custom..."]
+    options = list(values)
     if current and current not in options:
-        options.insert(-1, current)
+        options.append(current)
     val = current or default_val
     index = options.index(val) if val in options else 0
-    picked = st.selectbox(label, options, index=index, key=key)
-    if picked == "+ Add custom...":
-        custom_val = st.text_input(f"New {label.lower()}", key=f"{key}_custom_val")
-        if custom_val.strip():
-            return custom_val.strip()
-        return val
-    return picked
+    picked = st.selectbox(
+        label, options, index=index, key=key,
+        accept_new_options=True, help=_ADD_HELP,
+    )
+    return picked.strip() if picked else val
 def _account_form(form_key: str, defaults: dict) -> dict | None:
     """Shared add/edit account form: reference facts entered once. Key people
     live on the Contacts tab; next action is set from the Activity Log only."""
@@ -126,15 +98,15 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
             pms = st.text_input("PMS", value=defaults.get("pms") or "")
             source_detail = st.text_input("Source detail", value=defaults.get("source_detail") or "")
         with c3:
-            owner_id, custom_owner = _owner_select("Kairos owner", f"{form_key}_owner", defaults.get("kairos_owner_id"))
-            channel_id, custom_channel = _channel_select("Channel type", f"{form_key}_channel", defaults.get("channel_type_id"))
-            
+            owner_id = _owner_select("Kairos owner", f"{form_key}_owner", defaults.get("kairos_owner_id"))
+            channel_id = _channel_select("Channel type", f"{form_key}_channel", defaults.get("channel_type_id"))
+
             stage_dynamic = queries.get_distinct_column_values("accounts", "pipeline_stage")
             stage_options = sorted(list(set(PIPELINE_STAGES) | set(stage_dynamic)))
-            stage = _stage_select(
+            stage = _custom_select(
                 "Pipeline stage", stage_options,
                 current=defaults.get("pipeline_stage") or "New Lead",
-                key=f"{form_key}_stage",
+                key=f"{form_key}_stage", default_val="New Lead",
             )
             
             lost_reasons_dynamic = queries.get_distinct_column_values("accounts", "lost_reason")
@@ -158,18 +130,10 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
         st.error("Practice name is required.")
         return None
 
-    # Handle inline custom creation
-    if owner_id == "ADD_NEW":
-        if custom_owner and custom_owner.strip():
-            owner_id = queries.add_user(custom_owner.strip())
-        else:
-            owner_id = None
-
-    if channel_id == "ADD_NEW":
-        if custom_channel and custom_channel.strip():
-            channel_id = queries.add_channel_type(custom_channel.strip())
-        else:
-            channel_id = None
+    if isinstance(owner_id, str):
+        owner_id = queries.add_user(owner_id.strip()) if owner_id.strip() else None
+    if isinstance(channel_id, str):
+        channel_id = queries.add_channel_type(channel_id.strip()) if channel_id.strip() else None
     return {
         "practice_name": practice_name.strip(),
         "practice_email": practice_email.strip() or None,
@@ -750,8 +714,8 @@ def _render_detail(account_id: int) -> None:
             c1, c2, c3 = st.columns(3)
             act_date = c1.date_input("Date", value=central_today())
             with c2:
-                owner_id, custom_owner = _owner_select("Kairos owner", "activity_owner")
-            
+                owner_id = _owner_select("Kairos owner", "activity_owner")
+
             act_types_dynamic = queries.get_distinct_column_values("activities", "activity_type")
             act_types_options = sorted(list(set(ACTIVITY_TYPES) | set(act_types_dynamic)))
             act_type = _custom_select("Type", act_types_options, "activity_type_select", default_val=ACTIVITY_TYPES[0])
@@ -771,11 +735,8 @@ def _render_detail(account_id: int) -> None:
                     value=True,
                 )
             if st.form_submit_button("Log", icon=":material/add_task:"):
-                if owner_id == "ADD_NEW":
-                    if custom_owner and custom_owner.strip():
-                        owner_id = queries.add_user(custom_owner.strip())
-                    else:
-                        owner_id = None
+                if isinstance(owner_id, str):
+                    owner_id = queries.add_user(owner_id.strip()) if owner_id.strip() else None
                 payload = {
                     "account_id": account_id,
                     "date": act_date.isoformat(),

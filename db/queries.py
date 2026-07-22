@@ -14,6 +14,12 @@ def list_users(active_only: bool = True) -> list[dict]:
 
 
 def add_user(name: str) -> int:
+    """Idempotent by name: inline creation from a dropdown can fire twice for the
+    same typed name (re-saving a form), and duplicate owners are hard to unpick."""
+    existing = get_client().table("users").select("id").ilike("name", name).execute().data
+    if existing:
+        set_user_active(existing[0]["id"], True)
+        return existing[0]["id"]
     res = get_client().table("users").insert({"name": name}).execute()
     return res.data[0]["id"]
 
@@ -30,6 +36,10 @@ def list_channel_types(active_only: bool = True) -> list[dict]:
 
 
 def add_channel_type(label: str) -> int:
+    existing = get_client().table("channel_types").select("id").ilike("label", label).execute().data
+    if existing:
+        set_channel_type_active(existing[0]["id"], True)
+        return existing[0]["id"]
     res = get_client().table("channel_types").insert({"label": label}).execute()
     return res.data[0]["id"]
 
