@@ -169,6 +169,22 @@ function tokenSortRatio(a: string, b: string): number {
   return Math.round(((sumLen - dist) / sumLen) * 100);
 }
 
+// Existing options that fuzzily resemble a proposed new value, most similar
+// first. Used to push back before the bot coins a near-duplicate (e.g. a new
+// "Follow-up text" activity type when "Text sent" already exists). 65 is a
+// starting default, like NAME_SIMILARITY_THRESHOLD in utils/dedup.py — not
+// tuned; flag to Yajat rather than silently adjusting if it misses or
+// over-triggers on real traffic.
+function topSimilar(candidate: string, options: string[], limit = 2): string[] {
+  return options
+    .filter((o) => o.toLowerCase() !== candidate.toLowerCase())
+    .map((o) => ({ value: o, score: tokenSortRatio(candidate, o) }))
+    .filter((s) => s.score >= 65)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((s) => s.value);
+}
+
 // deno-lint-ignore no-explicit-any
 function findDuplicates(
   candidate: Record<string, any>,
@@ -274,6 +290,7 @@ const TOOL_DECLARATIONS = [
         date: { type: "STRING", description: "YYYY-MM-DD, defaults to today in Chicago" },
         next_action: { type: "STRING" },
         next_action_due_date: { type: "STRING", description: "YYYY-MM-DD" },
+        confirm_new: { type: "BOOLEAN", description: "Set true only on a follow-up call, after the user has explicitly said they want a brand-new activity_type despite a similar existing one you already asked them about." },
       },
       required: ["account_id", "activity_type", "summary"],
     },
@@ -387,6 +404,7 @@ const TOOL_DECLARATIONS = [
         role: { type: "STRING", description: "Their role at the practice, e.g. Office Manager, Dentist/Owner, Front Desk." },
         email: { type: "STRING" },
         phone: { type: "STRING" },
+        confirm_new: { type: "BOOLEAN", description: "Set true only on a follow-up call, after the user has explicitly confirmed this is a different person from a similarly-named existing contact you already asked them about." },
       },
       required: ["account_id", "name"],
     },
@@ -508,10 +526,19 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           // Any type is allowed (the column is unconstrained and the app accepts
           // typed-in types); flag one the team has never used so the model warns
           // the rep it is coining a new type before they confirm.
-          const known = new Set(
-            [...ACTIVITY_TYPES, ...(await knownActivityTypes())].map((t) => t.toLowerCase()),
-          );
+          const allTypes = [...ACTIVITY_TYPES, ...(await knownActivityTypes())];
+          const known = new Set(allTypes.map((t) => t.toLowerCase()));
           const isNew = !known.has(activityType.toLowerCase());
+          const similar = isNew ? topSimilar(activityType, allTypes) : [];
+          if (isNew && similar.length && !args.confirm_new) {
+            // Not staged: the user hasn't resolved which one they mean yet, so a
+            // plain "yes" from them must not execute this ambiguous call.
+            return {
+              status: "needs_clarification",
+              similar_existing_types: similar,
+              note: `"${activityType}" is not an existing activity type, and it looks similar to existing type(s): ${similar.join(", ")}. Do NOT stage or propose anything yet. Ask the user whether they meant one of the existing similar type(s), or really want a new type called "${activityType}". Once they answer, call log_activity again: with the existing type name if they picked one, or with the same new name and confirm_new: true if they confirmed a new type - then make the normal 'Reply yes to save' proposal.`,
+            };
+          }
           return {
             status: "needs_confirmation",
             new_activity_type: isNew,
@@ -674,6 +701,21 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
         if (!args.account_id) return { error: "account_id is required" };
         if (!name) return { error: "name is required" };
         if (!commit) {
+          const { data: existingContacts } = await supabase
+            .from("contacts")
+            .select("name, role")
+            .eq("account_id", Number(args.account_id));
+          const existingNames = (existingContacts ?? []).map((c: { name: string }) => c.name).filter(Boolean);
+          const similar = topSimilar(name, existingNames);
+          if (similar.length && !args.confirm_new) {
+            // Not staged: a plain "yes" must not add a possible duplicate person
+            // before the user has said whether it's really a different person.
+            return {
+              status: "needs_clarification",
+              similar_existing_contacts: similar,
+              note: `"${name}" looks similar to existing contact(s) already on this account: ${similar.join(", ")}. Do NOT stage or propose anything yet. Ask the user whether this is the same person (if so, use update_account or just skip - do not add) or a genuinely different person. If they confirm it's a different person, call add_contact again with confirm_new: true, then make the normal 'Reply yes to save' proposal.`,
+            };
+          }
           return {
             status: "needs_confirmation",
             note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save.",
@@ -878,6 +920,7 @@ function systemPrompt(
     "When a field you inferred is a genuine judgement call rather than obvious, still set it, but note the assumption in one short line in your proposal so the user can correct it before saving.",
     "Writes are two-step and the system enforces it. When the user requests a change, call create_account, log_activity, or update_account right away with professionalized field values - the system stages the change instead of saving it and returns needs_confirmation. Then reply with one short proposal naming the account/action and quoting exactly what will be saved, ending with 'Reply yes to save.'",
     "Duplicate check on account creation: When calling create_account, if the tool response returns a list of duplicates, you must warn the user of the duplicates, list them briefly (with their practice name and city), and ask if they still want to save this new account.",
+    "Same principle for any other new creation: log_activity (new activity_type) and add_contact (new person) check what already exists first. If the tool response has status needs_clarification, that call is NOT staged - do not say 'reply yes to save' or anything implying it was proposed. Instead relay the similar existing entries it found and ask the user whether they meant one of those or really want a new one, then stop and wait. Once the user answers: if they picked an existing one, call the tool again with that existing value; if they confirmed a new one, call it again with the same value plus confirm_new: true - only then make the normal proposal ending in 'Reply yes to save.'",
     "You cannot save anything yourself. The system saves the staged change only when the user replies with an affirmative, and it sends its own saved-confirmation text. Never claim that something was logged, saved, or updated. If the user replies with corrections instead of yes, call the tool again with corrected values and propose again.",
     "Professionalize everything you save. The team texts in quick casual language, all caps, slang, shorthand - never store their words verbatim. Rewrite summaries, next actions, and other fields into concise, dashboard-ready CRM language: proper capitalization, full words, neutral professional tone, third person, facts preserved exactly. Show the professionalized wording in your confirmation proposal so the user approves the final text.",
     `Pipeline stages: ${PIPELINE_STAGES.join(", ")}.`,
