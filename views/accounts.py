@@ -718,8 +718,12 @@ def _render_detail(account_id: int) -> None:
 
             act_types_dynamic = queries.get_distinct_column_values("activities", "activity_type")
             act_types_options = sorted(list(set(ACTIVITY_TYPES) | set(act_types_dynamic)))
-            act_type = _custom_select("Type", act_types_options, "activity_type_select", default_val=ACTIVITY_TYPES[0])
-            
+            t1, t2 = st.columns(2)
+            with t1:
+                act_type = _custom_select("Type", act_types_options, "activity_type_select", default_val=ACTIVITY_TYPES[0])
+            new_type = t2.text_input("Add new type (overrides selection)", key="activity_type_new")
+            act_type = new_type.strip() or act_type
+
             summary = st.text_area("Summary")
             c4, c5 = st.columns(2)
             next_action = c4.text_input("Next action")

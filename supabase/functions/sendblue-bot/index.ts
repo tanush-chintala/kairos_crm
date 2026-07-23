@@ -269,7 +269,7 @@ const TOOL_DECLARATIONS = [
       type: "OBJECT",
       properties: {
         account_id: { type: "INTEGER" },
-        activity_type: { type: "STRING", description: `One of: ${ACTIVITY_TYPES.join(", ")}` },
+        activity_type: { type: "STRING", description: `Prefer an existing type from: ${ACTIVITY_TYPES.join(", ")} (or one of the current custom types listed in the system prompt). If none fits, you may use a short new type name in the same sentence-case style (e.g. "Text sent"), but you must flag it as new in your proposal.` },
         summary: { type: "STRING" },
         date: { type: "STRING", description: "YYYY-MM-DD, defaults to today in Chicago" },
         next_action: { type: "STRING" },
@@ -499,23 +499,32 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
         };
       }
       case "log_activity": {
-        if (!ACTIVITY_TYPES.includes(args.activity_type)) {
-          return { error: `activity_type must be one of: ${ACTIVITY_TYPES.join(", ")}` };
-        }
+        const activityType = String(args.activity_type ?? "").trim();
+        if (!activityType) return { error: "activity_type is required" };
         if (args.next_action_due_date && !isDate(args.next_action_due_date)) {
           return { error: "next_action_due_date must be YYYY-MM-DD" };
         }
         if (!commit) {
+          // Any type is allowed (the column is unconstrained and the app accepts
+          // typed-in types); flag one the team has never used so the model warns
+          // the rep it is coining a new type before they confirm.
+          const known = new Set(
+            [...ACTIVITY_TYPES, ...(await knownActivityTypes())].map((t) => t.toLowerCase()),
+          );
+          const isNew = !known.has(activityType.toLowerCase());
           return {
             status: "needs_confirmation",
-            note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save.",
+            new_activity_type: isNew,
+            note: isNew
+              ? `"${activityType}" is not an existing activity type. In your proposal, explicitly tell the user you are creating a NEW activity type by this name, then ask them to reply yes to save.`
+              : "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save.",
           };
         }
         const row: ToolArgs = {
           account_id: Number(args.account_id),
           date: isDate(args.date) ? args.date : chicagoToday(),
           kairos_owner_id: userId,
-          activity_type: args.activity_type,
+          activity_type: activityType,
           summary: args.summary ?? null,
           next_action: args.next_action ?? null,
           next_action_due_date: args.next_action_due_date ?? null,
@@ -784,6 +793,22 @@ async function accountName(id: number): Promise<string> {
   return data?.practice_name ?? `account ${id}`;
 }
 
+// Distinct activity types the team has actually logged (excluding system-generated
+// ones). Merged with the fixed ACTIVITY_TYPES so the bot knows which types already
+// exist and can flag when it is coining a genuinely new one.
+async function knownActivityTypes(): Promise<string[]> {
+  const { data } = await supabase
+    .from("activities")
+    .select("activity_type")
+    .not("is_system", "is", true);
+  const set = new Set<string>();
+  for (const r of data ?? []) {
+    const t = String(r.activity_type ?? "").trim();
+    if (t) set.add(t);
+  }
+  return [...set];
+}
+
 async function executePending(
   userId: number,
   calls: StagedCall[],
@@ -834,9 +859,13 @@ function systemPrompt(
   userName: string,
   users: { id: number; name: string }[],
   channelTypes: { id: number; label: string }[],
+  customActivityTypes: string[],
 ): string {
   const usersList = users.map((u) => `${u.name} (ID: ${u.id})`).join(", ");
   const channelsList = channelTypes.map((c) => `${c.label} (ID: ${c.id})`).join(", ");
+  const customTypesLine = customActivityTypes.length
+    ? ` Existing custom types the team has already used: ${customActivityTypes.join(", ")}.`
+    : "";
   return [
     `You are the Kairos CRM assistant, texting with ${userName}, a member of the Kairos dental-AI sales team.`,
     `Today is ${chicagoWeekday()}, ${chicagoToday()} (America/Chicago). All dates use YYYY-MM-DD. Resolve relative days like 'Friday' or 'tomorrow' from this exact date and double-check the weekday arithmetic.`,
@@ -852,7 +881,7 @@ function systemPrompt(
     "You cannot save anything yourself. The system saves the staged change only when the user replies with an affirmative, and it sends its own saved-confirmation text. Never claim that something was logged, saved, or updated. If the user replies with corrections instead of yes, call the tool again with corrected values and propose again.",
     "Professionalize everything you save. The team texts in quick casual language, all caps, slang, shorthand - never store their words verbatim. Rewrite summaries, next actions, and other fields into concise, dashboard-ready CRM language: proper capitalization, full words, neutral professional tone, third person, facts preserved exactly. Show the professionalized wording in your confirmation proposal so the user approves the final text.",
     `Pipeline stages: ${PIPELINE_STAGES.join(", ")}.`,
-    `Activity types: ${ACTIVITY_TYPES.join(", ")}.`,
+    `Activity types: ${ACTIVITY_TYPES.join(", ")}.${customTypesLine} Prefer one of these when it fits. If the rep describes something none of them captures (for example a text message, which has no existing type), you may log a new short type in the same sentence-case style (e.g. "Text sent"). When you do, you MUST state in your proposal that you are creating a NEW activity type by that name so the rep can correct it before replying yes. Do not spin up a near-duplicate of an existing type - reuse the existing one.`,
     `Kairos Owners: ${usersList}.`,
     `Channel Types: ${channelsList}.`,
     "You are texting: reply in plain conversational text. No markdown, no asterisks, no emojis, no headers. Keep replies compact - short lines, one item per line for lists. Round nothing; quote fields as stored.",
@@ -893,8 +922,9 @@ async function runAgent(
   contents: Content[],
   users: { id: number; name: string }[],
   channelTypes: { id: number; label: string }[],
+  customActivityTypes: string[],
 ): Promise<{ text: string; staged: StagedCall[] }> {
-  const sys = systemPrompt(userName, users, channelTypes);
+  const sys = systemPrompt(userName, users, channelTypes, customActivityTypes);
   let model = GEMINI_MODEL;
   let emptyRetries = 0;
   const staged: StagedCall[] = [];
@@ -1029,6 +1059,9 @@ Deno.serve(async (req) => {
 
   const { data: users } = await supabase.from("users").select("id, name, phone").eq("active", true);
   const { data: channelTypes } = await supabase.from("channel_types").select("id, label").eq("active", true);
+  const customActivityTypes = (await knownActivityTypes()).filter(
+    (t) => !ACTIVITY_TYPES.some((f) => f.toLowerCase() === t.toLowerCase()),
+  );
   
   let user = null;
   if (payload.user_id) {
@@ -1075,7 +1108,7 @@ Deno.serve(async (req) => {
 
   const contents = await loadHistory(sessionId);
   contents.push({ role: "user", parts: [{ text: content }] });
-  let { text: reply, staged } = await runAgent(sender.id, sender.name, contents, users ?? [], channelTypes ?? []);
+  let { text: reply, staged } = await runAgent(sender.id, sender.name, contents, users ?? [], channelTypes ?? [], customActivityTypes);
 
   // The model sometimes writes proposal text without making the tool call, so
   // there is nothing staged and the user's yes dead-ends. Detect that and force
@@ -1088,7 +1121,7 @@ Deno.serve(async (req) => {
         text: "SYSTEM: Your proposal was not staged because you did not call the tool. Call the matching write tool (log_activity, update_account, create_account, add_contact, or log_demo) now with exactly the values you proposed, then repeat the proposal.",
       }],
     });
-    const retry = await runAgent(sender.id, sender.name, contents, users ?? [], channelTypes ?? []);
+    const retry = await runAgent(sender.id, sender.name, contents, users ?? [], channelTypes ?? [], customActivityTypes);
     if (retry.staged.length) {
       reply = retry.text;
       staged = retry.staged;
