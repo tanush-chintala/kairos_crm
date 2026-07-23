@@ -76,6 +76,19 @@ const COMPETITOR_TOOLS = [
 ];
 const DECISION_MAKER_REACHED = ["Unknown", "Yes", "No"];
 const DEMO_STATUSES = ["Scheduled", "Completed", "No-show", "Rescheduled"];
+const TEMPLATE_CATEGORIES = [
+  "Follow-up after in-person visit — went well",
+  "Follow-up after in-person visit — neutral or poor",
+  "Follow-up after in-person visit — interested later",
+  "Scheduling a demo after visit",
+  "Follow-up after no response",
+  "Conference follow-up",
+  "Referral follow-up",
+  "Post-demo follow-up",
+  "Pricing/onboarding follow-up",
+  "Rejection / keep-in-touch",
+];
+const CADENCE_CHANNELS = ["Phone call", "Email", "Text", "In-person visit"];
 
 const ACCOUNT_SUMMARY_COLS =
   "id, practice_name, city, pipeline_stage, kairos_owner_id, next_action, next_action_due_date, last_action_date";
@@ -270,7 +283,7 @@ const TOOL_DECLARATIONS = [
   {
     name: "get_account_details",
     description:
-      "Full detail for one account: every field plus contacts, recent activities, and demos.",
+      "Full detail for one account: every field plus contacts, recent activities, and demos. Contacts and demos include their id - use those exact ids for edit_contact/edit_demo, never a guessed or remembered number.",
     parameters: {
       type: "OBJECT",
       properties: { account_id: { type: "INTEGER" } },
@@ -343,6 +356,8 @@ const TOOL_DECLARATIONS = [
         channel_type_id: { type: "INTEGER", description: "Reassign how this lead was sourced. Channel type ID from the list in the system prompt." },
         kairos_owner_id: { type: "INTEGER", description: "Reassign the account's Kairos owner. User ID from the list in the system prompt." },
         initial_encounter_summary: { type: "STRING", description: "Narrative of the first meaningful encounter. Prefer log_activity for ongoing updates; only edit this to correct the original." },
+        cadence_id: { type: "INTEGER", description: "Enroll the account in a follow-up cadence. Cadence ID from list_settings." },
+        cadence_paused: { type: "BOOLEAN", description: "Pause or resume the account's current cadence without changing which one it's on." },
       },
       required: ["account_id"],
     },
@@ -427,6 +442,127 @@ const TOOL_DECLARATIONS = [
       required: ["account_id"],
     },
   },
+  {
+    name: "list_settings",
+    description:
+      "List admin/settings data: all users and channel types (including inactive), all cadences with their steps, and all email templates. Use this to resolve names to IDs before manage_user, manage_channel_type, manage_cadence, manage_cadence_step, manage_email_template, or an update_account cadence_id, including inactive ones you might reactivate.",
+    parameters: { type: "OBJECT", properties: {} },
+  },
+  {
+    name: "manage_user",
+    description: "Add a new Kairos team member, or deactivate/reactivate an existing one. Deactivate rather than delete so historical accounts keep their owner reference.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        action: { type: "STRING", enum: ["add", "deactivate", "reactivate"] },
+        name: { type: "STRING", description: "Full name (for add)." },
+        user_id: { type: "INTEGER", description: "ID from list_settings (for deactivate/reactivate)." },
+        confirm_new: { type: "BOOLEAN", description: "Set true only after the user confirmed a genuinely new team member despite a similarly-named existing one." },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "manage_channel_type",
+    description: "Add a new lead-source channel type, or deactivate/reactivate an existing one. Deactivate rather than delete so historical accounts keep their reference.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        action: { type: "STRING", enum: ["add", "deactivate", "reactivate"] },
+        label: { type: "STRING", description: "Channel type name (for add)." },
+        channel_type_id: { type: "INTEGER", description: "ID from list_settings (for deactivate/reactivate)." },
+        confirm_new: { type: "BOOLEAN", description: "Set true only after the user confirmed a genuinely new channel type despite a similarly-named existing one." },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "manage_cadence",
+    description: "Create a new follow-up cadence, edit its name/description, or deactivate/reactivate it. Steps are managed separately with manage_cadence_step.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        action: { type: "STRING", enum: ["create", "update", "deactivate", "reactivate"] },
+        cadence_id: { type: "INTEGER", description: "ID from list_settings (for update/deactivate/reactivate)." },
+        name: { type: "STRING" },
+        description: { type: "STRING" },
+        confirm_new: { type: "BOOLEAN", description: "Set true only after the user confirmed a genuinely new cadence despite a similarly-named existing one." },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "manage_cadence_step",
+    description: "Add, edit, or delete a single step within a cadence. day_gap is calendar days after the previous step (step 1 counts from enrollment).",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        action: { type: "STRING", enum: ["add", "update", "delete"] },
+        cadence_id: { type: "INTEGER", description: "ID from list_settings (required for add)." },
+        step_id: { type: "INTEGER", description: "ID from list_settings (required for update/delete)." },
+        step_order: { type: "INTEGER", description: "Position of this step within the cadence, starting at 1." },
+        channel: { type: "STRING", description: `Prefer one of: ${CADENCE_CHANNELS.join(", ")}. A custom channel name is allowed.` },
+        day_gap_min: { type: "INTEGER", description: "Minimum days after the previous step. Default 0." },
+        day_gap_max: { type: "INTEGER", description: "Maximum days after the previous step, shown as guidance." },
+        note: { type: "STRING" },
+        email_template_id: { type: "INTEGER", description: "Email template to use for this step, ID from list_settings." },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "manage_email_template",
+    description: "Create, edit, or delete a reusable email template.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        action: { type: "STRING", enum: ["create", "update", "delete"] },
+        template_id: { type: "INTEGER", description: "ID from list_settings (required for update/delete)." },
+        name: { type: "STRING" },
+        category: { type: "STRING", description: `One of: ${TEMPLATE_CATEGORIES.join(", ")}.` },
+        situation: { type: "STRING", description: "When to use this template." },
+        subject: { type: "STRING" },
+        body: { type: "STRING" },
+        notes: { type: "STRING" },
+        confirm_new: { type: "BOOLEAN", description: "Set true only after the user confirmed a genuinely new template despite a similarly-named existing one." },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "edit_contact",
+    description: "Update or delete an existing contact person on an account's roster. For adding a new person, use add_contact instead. contact_id must come from get_account_details for the right account - never guess or reuse an id from a different account.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        action: { type: "STRING", enum: ["update", "delete"] },
+        contact_id: { type: "INTEGER", description: "ID of the contact, from find_account/get_account_details." },
+        name: { type: "STRING" },
+        role: { type: "STRING" },
+        email: { type: "STRING" },
+        phone: { type: "STRING" },
+      },
+      required: ["action", "contact_id"],
+    },
+  },
+  {
+    name: "edit_demo",
+    description: "Update or delete an existing demo record. For logging a new demo, use log_demo instead. demo_id must come from get_account_details for the right account - never guess or reuse an id from a different account.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        action: { type: "STRING", enum: ["update", "delete"] },
+        demo_id: { type: "INTEGER", description: "ID of the demo, from get_account_details." },
+        demo_date: { type: "STRING", description: "YYYY-MM-DD." },
+        status: { type: "STRING", description: `One of: ${DEMO_STATUSES.join(", ")}.` },
+        attendees: { type: "STRING" },
+        pain_points: { type: "STRING" },
+        objections: { type: "STRING" },
+        follow_up_required: { type: "STRING" },
+      },
+      required: ["action", "demo_id"],
+    },
+  },
 ];
 
 // deno-lint-ignore no-explicit-any
@@ -439,7 +575,20 @@ type StagedCall = { name: string; args: ToolArgs };
 // tools can point elsewhere. account_id is set when the target is one account.
 type NavTarget = { page: string; label: string; account_id: number | null };
 
-const WRITE_TOOLS = new Set(["log_activity", "update_account", "create_account", "add_contact", "log_demo"]);
+const WRITE_TOOLS = new Set([
+  "log_activity",
+  "update_account",
+  "create_account",
+  "add_contact",
+  "log_demo",
+  "manage_user",
+  "manage_channel_type",
+  "manage_cadence",
+  "manage_cadence_step",
+  "manage_email_template",
+  "edit_contact",
+  "edit_demo",
+]);
 
 // Writes are gated in code, not by the model: without commit the tool only
 // validates and stages, and the actual insert/update happens in
@@ -494,7 +643,7 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
         const id = Number(args.account_id);
         const [account, contacts, activities, demos] = await Promise.all([
           supabase.from("account_overview").select("*").eq("id", id).maybeSingle(),
-          supabase.from("contacts").select("name, role, email, phone").eq("account_id", id),
+          supabase.from("contacts").select("id, name, role, email, phone").eq("account_id", id),
           supabase
             .from("activities")
             .select("date, activity_type, summary, next_action, next_action_due_date")
@@ -504,7 +653,7 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
             .limit(6),
           supabase
             .from("demos")
-            .select("demo_date, status, attendees, pain_points, objections, follow_up_required")
+            .select("id, demo_date, status, attendees, pain_points, objections, follow_up_required")
             .eq("account_id", id)
             .order("demo_date", { ascending: false }),
         ]);
@@ -585,6 +734,8 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           "channel_type_id",
           "kairos_owner_id",
           "initial_encounter_summary",
+          "cadence_id",
+          "cadence_paused",
         ];
         const fields: ToolArgs = {};
         for (const k of allowed) if (args[k] !== undefined) fields[k] = args[k];
@@ -778,6 +929,315 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
         }
         return error ? { error: error.message } : { ok: true, demo: row };
       }
+      case "list_settings": {
+        const [usersRes, channelsRes, cadencesRes, stepsRes, templatesRes] = await Promise.all([
+          supabase.from("users").select("id, name, active").order("name"),
+          supabase.from("channel_types").select("id, label, active").order("label"),
+          supabase.from("cadences").select("id, name, description, active").order("name"),
+          supabase.from("cadence_steps").select("*").order("cadence_id").order("step_order").order("id"),
+          supabase.from("email_templates").select("*").order("name"),
+        ]);
+        const stepsByCadence = new Map<number, ToolArgs[]>();
+        for (const step of stepsRes.data ?? []) {
+          const list = stepsByCadence.get(step.cadence_id) ?? [];
+          list.push(step);
+          stepsByCadence.set(step.cadence_id, list);
+        }
+        const cadences = (cadencesRes.data ?? []).map((c: ToolArgs) => ({
+          ...c,
+          steps: stepsByCadence.get(c.id) ?? [],
+        }));
+        return {
+          users: usersRes.data ?? [],
+          channel_types: channelsRes.data ?? [],
+          cadences,
+          email_templates: templatesRes.data ?? [],
+        };
+      }
+      case "manage_user": {
+        const action = String(args.action ?? "");
+        if (action === "add") {
+          const nameVal = String(args.name ?? "").trim();
+          if (!nameVal) return { error: "name is required" };
+          if (!commit) {
+            const { data } = await supabase.from("users").select("name");
+            const similar = topSimilar(nameVal, (data ?? []).map((u: { name: string }) => u.name).filter(Boolean));
+            if (similar.length && !args.confirm_new) {
+              return {
+                status: "needs_clarification",
+                similar_existing: similar,
+                note: `"${nameVal}" is similar to existing team member(s): ${similar.join(", ")}. Do NOT stage. Ask the user whether they meant one of those or really want to add a new person; if new, re-call with confirm_new: true.`,
+              };
+            }
+            return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          }
+          const { data: existing } = await supabase.from("users").select("id").ilike("name", nameVal).maybeSingle();
+          if (existing) {
+            const { error } = await supabase.from("users").update({ active: true }).eq("id", existing.id);
+            return error ? { error: error.message } : { ok: true, user_id: existing.id };
+          }
+          const { data: created, error } = await supabase.from("users").insert({ name: nameVal }).select("id").single();
+          return error ? { error: error.message } : { ok: true, user_id: created.id };
+        }
+        if (action === "deactivate" || action === "reactivate") {
+          if (!args.user_id) return { error: "user_id is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const { error } = await supabase.from("users").update({ active: action === "reactivate" }).eq("id", Number(args.user_id));
+          return error ? { error: error.message } : { ok: true };
+        }
+        return { error: `Unknown action ${action}` };
+      }
+      case "manage_channel_type": {
+        const action = String(args.action ?? "");
+        if (action === "add") {
+          const label = String(args.label ?? "").trim();
+          if (!label) return { error: "label is required" };
+          if (!commit) {
+            const { data } = await supabase.from("channel_types").select("label");
+            const similar = topSimilar(label, (data ?? []).map((c: { label: string }) => c.label).filter(Boolean));
+            if (similar.length && !args.confirm_new) {
+              return {
+                status: "needs_clarification",
+                similar_existing: similar,
+                note: `"${label}" is similar to existing channel type(s): ${similar.join(", ")}. Do NOT stage. Ask the user whether they meant one of those or really want a new channel type; if new, re-call with confirm_new: true.`,
+              };
+            }
+            return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          }
+          const { data: existing } = await supabase.from("channel_types").select("id").ilike("label", label).maybeSingle();
+          if (existing) {
+            const { error } = await supabase.from("channel_types").update({ active: true }).eq("id", existing.id);
+            return error ? { error: error.message } : { ok: true, channel_type_id: existing.id };
+          }
+          const { data: created, error } = await supabase.from("channel_types").insert({ label }).select("id").single();
+          return error ? { error: error.message } : { ok: true, channel_type_id: created.id };
+        }
+        if (action === "deactivate" || action === "reactivate") {
+          if (!args.channel_type_id) return { error: "channel_type_id is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const { error } = await supabase.from("channel_types").update({ active: action === "reactivate" }).eq("id", Number(args.channel_type_id));
+          return error ? { error: error.message } : { ok: true };
+        }
+        return { error: `Unknown action ${action}` };
+      }
+      case "manage_cadence": {
+        const action = String(args.action ?? "");
+        if (action === "create") {
+          const nameVal = String(args.name ?? "").trim();
+          if (!nameVal) return { error: "name is required" };
+          if (!commit) {
+            const { data } = await supabase.from("cadences").select("name");
+            const similar = topSimilar(nameVal, (data ?? []).map((c: { name: string }) => c.name).filter(Boolean));
+            if (similar.length && !args.confirm_new) {
+              return {
+                status: "needs_clarification",
+                similar_existing: similar,
+                note: `"${nameVal}" is similar to existing cadence(s): ${similar.join(", ")}. Do NOT stage. Ask the user whether they meant one of those or really want a new cadence; if new, re-call with confirm_new: true.`,
+              };
+            }
+            return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          }
+          const { data: created, error } = await supabase
+            .from("cadences")
+            .insert({ name: nameVal, description: args.description ? String(args.description).trim() : null })
+            .select("id")
+            .single();
+          return error ? { error: error.message } : { ok: true, cadence_id: created.id };
+        }
+        if (action === "update" || action === "deactivate" || action === "reactivate") {
+          if (!args.cadence_id) return { error: "cadence_id is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const fields: ToolArgs = {};
+          if (action === "update") {
+            if (args.name !== undefined) fields.name = String(args.name).trim();
+            if (args.description !== undefined) fields.description = args.description ? String(args.description).trim() : null;
+            if (!Object.keys(fields).length) return { error: "No editable fields provided" };
+          } else {
+            fields.active = action === "reactivate";
+          }
+          const { error } = await supabase.from("cadences").update(fields).eq("id", Number(args.cadence_id));
+          return error ? { error: error.message } : { ok: true, updated: fields };
+        }
+        return { error: `Unknown action ${action}` };
+      }
+      case "manage_cadence_step": {
+        const action = String(args.action ?? "");
+        if (action === "add") {
+          if (!args.cadence_id) return { error: "cadence_id is required" };
+          if (!args.channel) return { error: "channel is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const gapMin = args.day_gap_min !== undefined ? Number(args.day_gap_min) : 0;
+          const gapMax = Math.max(args.day_gap_max !== undefined ? Number(args.day_gap_max) : gapMin, gapMin);
+          const row = {
+            cadence_id: Number(args.cadence_id),
+            step_order: args.step_order !== undefined ? Number(args.step_order) : 1,
+            channel: String(args.channel).trim(),
+            day_gap_min: gapMin,
+            day_gap_max: gapMax,
+            note: args.note ? String(args.note).trim() : null,
+            email_template_id: args.email_template_id ? Number(args.email_template_id) : null,
+          };
+          const { error } = await supabase.from("cadence_steps").insert(row);
+          return error ? { error: error.message } : { ok: true, added: row };
+        }
+        if (action === "update") {
+          if (!args.step_id) return { error: "step_id is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const fields: ToolArgs = {};
+          if (args.step_order !== undefined) fields.step_order = Number(args.step_order);
+          if (args.channel !== undefined) fields.channel = String(args.channel).trim();
+          if (args.day_gap_min !== undefined) fields.day_gap_min = Number(args.day_gap_min);
+          if (args.day_gap_max !== undefined) fields.day_gap_max = Number(args.day_gap_max);
+          if (fields.day_gap_min !== undefined && fields.day_gap_max !== undefined) {
+            fields.day_gap_max = Math.max(fields.day_gap_max, fields.day_gap_min);
+          }
+          if (args.note !== undefined) fields.note = args.note ? String(args.note).trim() : null;
+          if (args.email_template_id !== undefined) fields.email_template_id = args.email_template_id ? Number(args.email_template_id) : null;
+          if (!Object.keys(fields).length) return { error: "No editable fields provided" };
+          const { error } = await supabase.from("cadence_steps").update(fields).eq("id", Number(args.step_id));
+          return error ? { error: error.message } : { ok: true, updated: fields };
+        }
+        if (action === "delete") {
+          if (!args.step_id) return { error: "step_id is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const { error } = await supabase.from("cadence_steps").delete().eq("id", Number(args.step_id));
+          return error ? { error: error.message } : { ok: true };
+        }
+        return { error: `Unknown action ${action}` };
+      }
+      case "manage_email_template": {
+        const action = String(args.action ?? "");
+        if (args.category !== undefined && !TEMPLATE_CATEGORIES.includes(args.category)) {
+          return { error: `category must be one of: ${TEMPLATE_CATEGORIES.join(", ")}` };
+        }
+        if (action === "create") {
+          const nameVal = String(args.name ?? "").trim();
+          if (!nameVal) return { error: "name is required" };
+          if (!args.category) return { error: "category is required" };
+          if (!commit) {
+            const { data } = await supabase.from("email_templates").select("name");
+            const similar = topSimilar(nameVal, (data ?? []).map((t: { name: string }) => t.name).filter(Boolean));
+            if (similar.length && !args.confirm_new) {
+              return {
+                status: "needs_clarification",
+                similar_existing: similar,
+                note: `"${nameVal}" is similar to existing template(s): ${similar.join(", ")}. Do NOT stage. Ask the user whether they meant one of those or really want a new template; if new, re-call with confirm_new: true.`,
+              };
+            }
+            return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          }
+          const row = {
+            name: nameVal,
+            category: args.category,
+            situation: args.situation ? String(args.situation).trim() : null,
+            subject: args.subject ? String(args.subject).trim() : null,
+            body: args.body ? String(args.body) : null,
+            notes: args.notes ? String(args.notes).trim() : null,
+          };
+          const { data: created, error } = await supabase.from("email_templates").insert(row).select("id").single();
+          return error ? { error: error.message } : { ok: true, template_id: created.id };
+        }
+        if (action === "update") {
+          if (!args.template_id) return { error: "template_id is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const fields: ToolArgs = {};
+          for (const k of ["name", "category", "situation", "subject", "body", "notes"]) {
+            if (args[k] !== undefined) fields[k] = k === "body" ? (args[k] || null) : (args[k] ? String(args[k]).trim() : null);
+          }
+          if (!Object.keys(fields).length) return { error: "No editable fields provided" };
+          const { error } = await supabase.from("email_templates").update(fields).eq("id", Number(args.template_id));
+          return error ? { error: error.message } : { ok: true, updated: fields };
+        }
+        if (action === "delete") {
+          if (!args.template_id) return { error: "template_id is required" };
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const { error } = await supabase.from("email_templates").delete().eq("id", Number(args.template_id));
+          return error ? { error: error.message } : { ok: true };
+        }
+        return { error: `Unknown action ${action}` };
+      }
+      case "edit_contact": {
+        const action = String(args.action ?? "");
+        if (!args.contact_id) return { error: "contact_id is required" };
+        if (action === "update") {
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const fields: ToolArgs = {};
+          for (const k of ["name", "role", "email", "phone"]) {
+            if (args[k] !== undefined) fields[k] = args[k] ? String(args[k]).trim() : null;
+          }
+          if (!Object.keys(fields).length) return { error: "No editable fields provided" };
+          const { data: before } = await supabase.from("contacts").select("account_id, name").eq("id", Number(args.contact_id)).maybeSingle();
+          if (!before) return { error: `No contact with id ${args.contact_id}` };
+          const { error } = await supabase.from("contacts").update(fields).eq("id", Number(args.contact_id));
+          if (!error) {
+            const changed = Object.keys(fields).map((k) => k.replaceAll("_", " ")).join(", ");
+            await supabase.from("activities").insert({
+              account_id: before.account_id, date: chicagoToday(), kairos_owner_id: userId,
+              activity_type: "Contact updated", summary: `${before.name}: ${changed}`, is_system: true,
+            });
+          }
+          return error ? { error: error.message } : { ok: true, updated: fields };
+        }
+        if (action === "delete") {
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const { data: before } = await supabase.from("contacts").select("account_id, name").eq("id", Number(args.contact_id)).maybeSingle();
+          if (!before) return { error: `No contact with id ${args.contact_id}` };
+          const { error } = await supabase.from("contacts").delete().eq("id", Number(args.contact_id));
+          if (!error) {
+            await supabase.from("activities").insert({
+              account_id: before.account_id, date: chicagoToday(), kairos_owner_id: userId,
+              activity_type: "Contact removed", summary: before.name, is_system: true,
+            });
+          }
+          return error ? { error: error.message } : { ok: true };
+        }
+        return { error: `Unknown action ${action}` };
+      }
+      case "edit_demo": {
+        const action = String(args.action ?? "");
+        if (!args.demo_id) return { error: "demo_id is required" };
+        if (args.status !== undefined && !DEMO_STATUSES.includes(args.status)) {
+          return { error: `status must be one of: ${DEMO_STATUSES.join(", ")}` };
+        }
+        if (args.demo_date && !isDate(args.demo_date)) {
+          return { error: "demo_date must be YYYY-MM-DD" };
+        }
+        if (action === "update") {
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const fields: ToolArgs = {};
+          if (args.demo_date !== undefined) fields.demo_date = isDate(args.demo_date) ? args.demo_date : null;
+          if (args.status !== undefined) fields.status = args.status;
+          for (const k of ["attendees", "pain_points", "objections", "follow_up_required"]) {
+            if (args[k] !== undefined) fields[k] = args[k] ? String(args[k]).trim() : null;
+          }
+          if (!Object.keys(fields).length) return { error: "No editable fields provided" };
+          const { data: before } = await supabase.from("demos").select("account_id").eq("id", Number(args.demo_id)).maybeSingle();
+          if (!before) return { error: `No demo with id ${args.demo_id}` };
+          const { error } = await supabase.from("demos").update(fields).eq("id", Number(args.demo_id));
+          if (!error) {
+            const changed = Object.keys(fields).map((k) => k.replaceAll("_", " ")).join(", ");
+            await supabase.from("activities").insert({
+              account_id: before.account_id, date: chicagoToday(), kairos_owner_id: userId,
+              activity_type: "Demo updated", summary: changed, is_system: true,
+            });
+          }
+          return error ? { error: error.message } : { ok: true, updated: fields };
+        }
+        if (action === "delete") {
+          if (!commit) return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          const { data: before } = await supabase.from("demos").select("account_id, demo_date").eq("id", Number(args.demo_id)).maybeSingle();
+          if (!before) return { error: `No demo with id ${args.demo_id}` };
+          const { error } = await supabase.from("demos").delete().eq("id", Number(args.demo_id));
+          if (!error) {
+            await supabase.from("activities").insert({
+              account_id: before.account_id, date: chicagoToday(), kairos_owner_id: userId,
+              activity_type: "Demo removed", summary: before.demo_date || "no date", is_system: true,
+            });
+          }
+          return error ? { error: error.message } : { ok: true };
+        }
+        return { error: `Unknown action ${action}` };
+      }
       default:
         return { error: `Unknown tool ${name}` };
     }
@@ -851,6 +1311,19 @@ async function knownActivityTypes(): Promise<string[]> {
   return [...set];
 }
 
+const ACCOUNT_SCOPED_TOOLS = new Set(["log_activity", "update_account", "create_account", "add_contact", "log_demo"]);
+
+// Past-tense wording for settings-tool confirmation lines. Not a uniform "+d"
+// suffix: "add" -> "added" (not "addd") is the case that breaks a naive rule.
+const PAST_TENSE: Record<string, string> = {
+  add: "added",
+  create: "created",
+  update: "updated",
+  delete: "deleted",
+  deactivate: "deactivated",
+  reactivate: "reactivated",
+};
+
 async function executePending(
   userId: number,
   calls: StagedCall[],
@@ -858,40 +1331,85 @@ async function executePending(
   const lines: string[] = [];
   let nav: NavTarget | null = null;
   for (const call of calls) {
-    const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
-    const name = call.name === "create_account"
-      ? (call.args.practice_name ?? "new account")
-      : (await accountName(Number(call.args.account_id)));
-    if (result?.error) {
-      lines.push(`Could not save the change on ${name}: ${result.error}`);
-    } else if (call.name === "create_account") {
-      lines.push(`Saved. Created account "${name}".`);
-    } else if (call.name === "log_activity") {
-      let line = `Saved. ${call.args.activity_type} logged on ${name}`;
-      if (call.args.next_action) {
-        line += `; next action "${call.args.next_action}"`;
-        if (call.args.next_action_due_date) line += ` due ${call.args.next_action_due_date}`;
+    if (ACCOUNT_SCOPED_TOOLS.has(call.name)) {
+      const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
+      const name = call.name === "create_account"
+        ? (call.args.practice_name ?? "new account")
+        : (await accountName(Number(call.args.account_id)));
+      if (result?.error) {
+        lines.push(`Could not save the change on ${name}: ${result.error}`);
+      } else if (call.name === "create_account") {
+        lines.push(`Saved. Created account "${name}".`);
+      } else if (call.name === "log_activity") {
+        let line = `Saved. ${call.args.activity_type} logged on ${name}`;
+        if (call.args.next_action) {
+          line += `; next action "${call.args.next_action}"`;
+          if (call.args.next_action_due_date) line += ` due ${call.args.next_action_due_date}`;
+        }
+        lines.push(line + ".");
+      } else if (call.name === "add_contact") {
+        const role = call.args.role ? ` (${call.args.role})` : "";
+        lines.push(`Saved. Added contact ${call.args.name}${role} to ${name}.`);
+      } else if (call.name === "log_demo") {
+        const status = call.args.status ?? "Scheduled";
+        const when = call.args.demo_date ? ` for ${call.args.demo_date}` : "";
+        lines.push(`Saved. Demo ${String(status).toLowerCase()}${when} logged on ${name}.`);
+      } else {
+        const fields = Object.entries(call.args)
+          .filter(([k]) => k !== "account_id")
+          .map(([k, v]) => `${k.replaceAll("_", " ")}: ${v}`)
+          .join(", ");
+        lines.push(`Saved. Updated ${name} - ${fields}.`);
       }
-      lines.push(line + ".");
-    } else if (call.name === "add_contact") {
-      const role = call.args.role ? ` (${call.args.role})` : "";
-      lines.push(`Saved. Added contact ${call.args.name}${role} to ${name}.`);
-    } else if (call.name === "log_demo") {
-      const status = call.args.status ?? "Scheduled";
-      const when = call.args.demo_date ? ` for ${call.args.demo_date}` : "";
-      lines.push(`Saved. Demo ${String(status).toLowerCase()}${when} logged on ${name}.`);
-    } else {
-      const fields = Object.entries(call.args)
-        .filter(([k]) => k !== "account_id")
-        .map(([k, v]) => `${k.replaceAll("_", " ")}: ${v}`)
-        .join(", ");
-      lines.push(`Saved. Updated ${name} - ${fields}.`);
+      if (!result?.error) {
+        const navId = call.name === "create_account"
+          ? Number((result as ToolArgs)?.created?.id)
+          : Number(call.args.account_id);
+        if (navId) nav = { page: "accounts", label: name, account_id: navId };
+      }
+      continue;
     }
-    if (!result?.error) {
-      const navId = call.name === "create_account"
-        ? Number((result as ToolArgs)?.created?.id)
-        : Number(call.args.account_id);
-      if (navId) nav = { page: "accounts", label: name, account_id: navId };
+
+    if (call.name === "edit_contact" || call.name === "edit_demo") {
+      const isContact = call.name === "edit_contact";
+      const table = isContact ? "contacts" : "demos";
+      const idVal = Number(isContact ? call.args.contact_id : call.args.demo_id);
+      const { data: row } = await supabase.from(table).select("account_id").eq("id", idVal).maybeSingle();
+      const accountId = row?.account_id ? Number(row.account_id) : null;
+      const practice = accountId ? await accountName(accountId) : "the account";
+      const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
+      const entity = isContact ? "contact" : "demo";
+      if (result?.error) {
+        lines.push(`Could not save the change on ${practice}: ${result.error}`);
+      } else if (call.args.action === "delete") {
+        lines.push(`Saved. Removed a ${entity} from ${practice}.`);
+      } else {
+        lines.push(`Saved. Updated a ${entity} on ${practice}.`);
+      }
+      if (!result?.error && accountId) nav = { page: "accounts", label: practice, account_id: accountId };
+      continue;
+    }
+
+    // Settings-domain tools: no account context, no nav.
+    const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
+    if (result?.error) {
+      lines.push(`Could not save that change: ${result.error}`);
+      continue;
+    }
+    const a = call.args;
+    const past = PAST_TENSE[String(a.action ?? "")] ?? String(a.action ?? "updated");
+    if (call.name === "manage_user") {
+      lines.push(a.action === "add" ? `Saved. Added team member "${a.name}".` : `Saved. Team member ${past}.`);
+    } else if (call.name === "manage_channel_type") {
+      lines.push(a.action === "add" ? `Saved. Added channel type "${a.label}".` : `Saved. Channel type ${past}.`);
+    } else if (call.name === "manage_cadence") {
+      lines.push(a.action === "create" ? `Saved. Created cadence "${a.name}".` : `Saved. Cadence ${past}.`);
+    } else if (call.name === "manage_cadence_step") {
+      lines.push(`Saved. Cadence step ${past}.`);
+    } else if (call.name === "manage_email_template") {
+      lines.push(a.action === "delete" ? "Saved. Email template deleted." : `Saved. Email template "${a.name ?? ""}" ${past}.`);
+    } else {
+      lines.push("Saved.");
     }
   }
   return { text: lines.join("\n"), nav };
@@ -920,13 +1438,16 @@ function systemPrompt(
     "When a field you inferred is a genuine judgement call rather than obvious, still set it, but note the assumption in one short line in your proposal so the user can correct it before saving.",
     "Writes are two-step and the system enforces it. When the user requests a change, call create_account, log_activity, or update_account right away with professionalized field values - the system stages the change instead of saving it and returns needs_confirmation. Then reply with one short proposal naming the account/action and quoting exactly what will be saved, ending with 'Reply yes to save.'",
     "Duplicate check on account creation: When calling create_account, if the tool response returns a list of duplicates, you must warn the user of the duplicates, list them briefly (with their practice name and city), and ask if they still want to save this new account.",
-    "Same principle for any other new creation: log_activity (new activity_type) and add_contact (new person) check what already exists first. If the tool response has status needs_clarification, that call is NOT staged - do not say 'reply yes to save' or anything implying it was proposed. Instead relay the similar existing entries it found and ask the user whether they meant one of those or really want a new one, then stop and wait. Once the user answers: if they picked an existing one, call the tool again with that existing value; if they confirmed a new one, call it again with the same value plus confirm_new: true - only then make the normal proposal ending in 'Reply yes to save.'",
+    "Same principle for any other new creation: log_activity (new activity_type), add_contact (new person), and adding a new user/channel type/cadence/email template all check what already exists first. If the tool response has status needs_clarification, that call is NOT staged - do not say 'reply yes to save' or anything implying it was proposed. Instead relay the similar existing entries it found and ask the user whether they meant one of those or really want a new one, then stop and wait. Once the user answers: if they picked an existing one, call the tool again with that existing value; if they confirmed a new one, call it again with the same value plus confirm_new: true - only then make the normal proposal ending in 'Reply yes to save.'",
     "You cannot save anything yourself. The system saves the staged change only when the user replies with an affirmative, and it sends its own saved-confirmation text. Never claim that something was logged, saved, or updated. If the user replies with corrections instead of yes, call the tool again with corrected values and propose again.",
     "Professionalize everything you save. The team texts in quick casual language, all caps, slang, shorthand - never store their words verbatim. Rewrite summaries, next actions, and other fields into concise, dashboard-ready CRM language: proper capitalization, full words, neutral professional tone, third person, facts preserved exactly. Show the professionalized wording in your confirmation proposal so the user approves the final text.",
     `Pipeline stages: ${PIPELINE_STAGES.join(", ")}.`,
     `Activity types: ${ACTIVITY_TYPES.join(", ")}.${customTypesLine} Prefer one of these when it fits. If the rep describes something none of them captures (for example a text message, which has no existing type), you may log a new short type in the same sentence-case style (e.g. "Text sent"). When you do, you MUST state in your proposal that you are creating a NEW activity type by that name so the rep can correct it before replying yes. Do not spin up a near-duplicate of an existing type - reuse the existing one.`,
     `Kairos Owners: ${usersList}.`,
     `Channel Types: ${channelsList}.`,
+    "You can also manage settings the same way the app's Settings and Email Templates pages do: manage_user, manage_channel_type, manage_cadence, manage_cadence_step, and manage_email_template (add/create, update, deactivate/reactivate, and delete steps or templates), and edit_contact / edit_demo to update or delete an existing contact or demo (add_contact and log_demo remain the tools for adding new ones). Call list_settings first whenever you need to look up a cadence, step, template, or an inactive user/channel ID by name - the lists above only carry active users and channel types.",
+    "Safety limits on this settings surface: you may deactivate but must NEVER delete an entire account - if asked to delete an account, say that has to be done in the app and do not call any tool. You may delete cadence steps, email templates, contacts, and demos, but only after the normal 'Reply yes to save' confirmation like any other write.",
+    `Email template category must be one of: ${TEMPLATE_CATEGORIES.join(", ")}. Cadence step channel should be one of: ${CADENCE_CHANNELS.join(", ")} (a custom channel name is allowed, like the app). The same two-step confirm and near-duplicate pushback rules described above apply to all of these tools.`,
     "You are texting: reply in plain conversational text. No markdown, no asterisks, no emojis, no headers. Keep replies compact - short lines, one item per line for lists. Round nothing; quote fields as stored.",
   ].join("\n");
 }
