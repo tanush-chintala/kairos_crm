@@ -82,7 +82,7 @@ def _custom_select(label: str, values: list[str], key: str, current=None, defaul
         accept_new_options=True, help=_ADD_HELP,
     )
     return picked.strip() if picked else val
-def _account_form(form_key: str, defaults: dict) -> dict | None:
+def _account_form(form_key: str, defaults: dict, is_new: bool = False) -> dict | None:
     """Shared add/edit account form: reference facts entered once. Key people
     live on the Contacts tab; next action is set from the Activity Log only."""
     with st.form(form_key):
@@ -123,6 +123,12 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
         initial_summary = st.text_area(
             "Initial encounter summary", value=defaults.get("initial_encounter_summary") or ""
         )
+        creation_reason = None
+        if is_new:
+            creation_reason = st.text_input(
+                "Reason for adding this account",
+                placeholder="e.g. referral from Dr. Smith, met at conference…",
+            )
         if not st.form_submit_button("Save", icon=":material/save:"):
             return None
 
@@ -134,7 +140,7 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
         owner_id = queries.add_user(owner_id.strip()) if owner_id.strip() else None
     if isinstance(channel_id, str):
         channel_id = queries.add_channel_type(channel_id.strip()) if channel_id.strip() else None
-    return {
+    payload = {
         "practice_name": practice_name.strip(),
         "practice_email": practice_email.strip() or None,
         "practice_phone": practice_phone.strip() or None,
@@ -150,6 +156,11 @@ def _account_form(form_key: str, defaults: dict) -> dict | None:
         "competitor_tool": competitor_tool,
         "pms": pms.strip() or None,
     }
+    if is_new:
+        # Only set on creation — the edit form reuses this same builder and must
+        # never overwrite an already-recorded creation reason with None.
+        payload["creation_reason"] = (creation_reason or "").strip() or None
+    return payload
 
 
 def _log_system(account_id: int, activity_type: str, summary: str | None = None) -> None:
@@ -386,15 +397,17 @@ def _render_list() -> None:
         st.rerun()
 
     with st.expander("Add account", icon=":material/add:"):
-        payload = _account_form("add_account", {})
+        payload = _account_form("add_account", {}, is_new=True)
         if payload:
+            payload["creation_source"] = "manual"
+            payload["creation_user_id"] = st.session_state["current_user"]["id"]
             matches = find_duplicates(payload, queries.list_accounts())
             if matches:
                 st.session_state["pending_account"] = payload
                 st.session_state["pending_matches"] = matches
             else:
                 created = queries.create_account(payload)
-                _log_system(created["id"], "Account created")
+                queries.log_account_creation(created)
                 st.success(f"Added {payload['practice_name']}.")
 
         if st.session_state.get("pending_account"):
@@ -403,7 +416,7 @@ def _render_list() -> None:
             c1, c2 = st.columns(2)
             if c1.button("Save anyway", icon=":material/warning:"):
                 created = queries.create_account(st.session_state.pop("pending_account"))
-                _log_system(created["id"], "Account created")
+                queries.log_account_creation(created)
                 st.session_state.pop("pending_matches", None)
                 st.rerun()
             if c2.button("Discard"):

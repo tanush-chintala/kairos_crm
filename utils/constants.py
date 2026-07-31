@@ -74,3 +74,15 @@ CADENCE_CHANNELS = ["Phone call", "Email", "Text", "In-person visit"]
 
 STALE_DAYS = 14
 WAITING_STALE_DAYS = 7
+
+DONUT_CALL_STATUSES = [
+    "Not Called",
+    "No Answer",
+    "Left Voicemail",
+    "Interested",
+    "Not Interested",
+    "Dead",
+    "Call Back Later",
+]
+
+CREATION_SOURCES = ["manual", "chatbot", "donut_scrape", "csv_import"]

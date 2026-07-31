@@ -197,6 +197,11 @@ if st.session_state.get("current_user"):
         if st.button(f"Logged in as {st.session_state['current_user']['name']}", icon=":material/person:", use_container_width=True, help="Click to switch user"):
             st.session_state["current_user"] = None
             st.session_state.pop("filters_persist", None)
+            # Donut Scraper view state is per-user (scrape runs, open run detail) — never
+            # let it survive a user switch, or the next user can land on someone else's run.
+            for key in list(st.session_state.keys()):
+                if key == "_donut_pipeline" or key == "_ds_view_run" or key == "_ds_open_expander" or key.startswith("ds_"):
+                    st.session_state.pop(key, None)
             controller.remove("kairos_user_id")
             st.rerun()
 
@@ -205,6 +210,7 @@ pages = st.navigation(
         st.Page("views/dashboard.py", title="Dashboard", icon=":material/dashboard:", default=True),
         st.Page("views/overview.py", title="Team Overview", icon=":material/groups:"),
         st.Page("views/accounts.py", title="Accounts", icon=":material/business:"),
+        st.Page("views/donut_scraper.py", title="Donut Scraper", icon=":material/map:"),
         st.Page("views/email_templates.py", title="Email Templates", icon=":material/mail:"),
         st.Page("views/csv_import.py", title="CSV Import", icon=":material/upload_file:"),
         st.Page("views/admin.py", title="Settings", icon=":material/settings:"),
@@ -304,6 +310,7 @@ _CHAT_NAV_PAGES = {
     "dashboard": "views/dashboard.py",
     "overview": "views/overview.py",
     "accounts": "views/accounts.py",
+    "donut_scraper": "views/donut_scraper.py",
     "email_templates": "views/email_templates.py",
     "csv_import": "views/csv_import.py",
     "admin": "views/admin.py",

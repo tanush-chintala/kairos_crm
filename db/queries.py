@@ -128,6 +128,53 @@ def log_activity(fields: dict) -> None:
     get_client().table("activities").insert(fields).execute()
 
 
+def log_account_creation(account: dict) -> None:
+    """Log how an account came to exist as the first entry in its activity log,
+    instead of a separate always-visible box on the account page. Called right
+    after create_account, regardless of source (manual, chatbot, donut_scrape,
+    csv_import) — every path funnels through here so the log entry format stays
+    consistent."""
+    from utils.tz import central_today
+
+    source = account.get("creation_source") or "manual"
+    user_id = account.get("creation_user_id")
+    user_name = None
+    if user_id:
+        users = list_users(active_only=False)
+        user_name = next((u["name"] for u in users if u["id"] == user_id), None)
+
+    if source == "manual":
+        summary = "Created manually"
+    elif source == "chatbot":
+        summary = "Created via chatbot"
+    elif source == "donut_scrape":
+        run_label = None
+        if account.get("donut_run_id"):
+            run = get_donut_run(account["donut_run_id"])
+            run_label = (run or {}).get("run_name") or f"Run #{account['donut_run_id']}"
+        summary = f"Created from Donut Scrape — {run_label}" if run_label else "Created from Donut Scrape"
+    elif source == "csv_import":
+        summary = "Created via CSV import"
+    else:
+        summary = f"Created ({source})"
+
+    if user_name:
+        summary += f" by {user_name}"
+
+    reason = account.get("creation_reason")
+    if reason:
+        summary += f" — {reason}"
+
+    log_activity({
+        "account_id": account["id"],
+        "date": central_today().isoformat(),
+        "kairos_owner_id": user_id,
+        "activity_type": "Account created",
+        "summary": summary,
+        "is_system": True,
+    })
+
+
 def list_demos(account_id: int) -> list[dict]:
     return (
         get_client().table("demos").select("*").eq("account_id", account_id)
@@ -262,3 +309,178 @@ def rename_chat_session(session_id: int, title: str | None) -> None:
 
 def delete_chat_session(session_id: int) -> None:
     get_client().table("chat_sessions").delete().eq("id", session_id).execute()
+
+
+# ── Donut Runs ───────────────────────────────────────────────────────────────
+
+def create_donut_run(fields: dict) -> dict:
+    return get_client().table("donut_runs").insert(fields).execute().data[0]
+
+
+def get_donut_run(run_id: int) -> dict | None:
+    rows = get_client().table("donut_runs").select("*").eq("id", run_id).execute().data
+    return rows[0] if rows else None
+
+
+def list_donut_runs(user_id: int | None = None) -> list[dict]:
+    query = get_client().table("donut_runs").select("*")
+    if user_id is not None:
+        query = query.eq("created_by", user_id)
+    return query.order("created_at", desc=True).execute().data
+
+
+def update_donut_run(run_id: int, fields: dict) -> None:
+    get_client().table("donut_runs").update(fields).eq("id", run_id).execute()
+
+
+# ── Donut Run Results ────────────────────────────────────────────────────────
+
+def create_donut_run_result(fields: dict) -> dict:
+    return get_client().table("donut_run_results").insert(fields).execute().data[0]
+
+
+def bulk_create_donut_run_results(rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+    return get_client().table("donut_run_results").insert(rows).execute().data
+
+
+def list_donut_run_results(run_id: int) -> list[dict]:
+    return (
+        get_client().table("donut_run_results").select("*")
+        .eq("donut_run_id", run_id)
+        .order("clinic_name").execute().data
+    )
+
+
+def update_donut_run_result(result_id: int, fields: dict) -> None:
+    get_client().table("donut_run_results").update(fields).eq("id", result_id).execute()
+
+
+def promote_donut_result(result_id: int, user_id: int) -> dict:
+    """Create a CRM account from a donut run result and link them."""
+    result = get_client().table("donut_run_results").select("*").eq("id", result_id).execute().data
+    if not result:
+        raise ValueError(f"Donut result {result_id} not found")
+    r = result[0]
+    if r.get("promoted_account_id"):
+        # Already promoted
+        return get_account(r["promoted_account_id"])
+
+    account_fields = {
+        "practice_name": r["clinic_name"],
+        "practice_email": r.get("email") or None,
+        "practice_phone": r.get("phone") or None,
+        "website": r.get("website") or None,
+        "city": _city_from_address(r.get("address", "")),
+        "state": _state_from_address(r.get("address", "")),
+        "pipeline_stage": "New Lead",
+        "source_detail": f"Donut Scrape — {r.get('classification') or 'dental clinic'}",
+        "creation_source": "donut_scrape",
+        "kairos_owner_id": user_id,
+        "creation_user_id": user_id,
+        "donut_run_id": r["donut_run_id"],
+        "channel_type_id": _get_donut_channel_id(),
+    }
+    account = create_account(account_fields)
+    log_account_creation(account)
+    update_donut_run_result(result_id, {"promoted_account_id": account["id"]})
+    return account
+
+
+def unpromote_donut_result(result_id: int) -> None:
+    """Unlink a donut run result from its CRM account."""
+    update_donut_run_result(result_id, {"promoted_account_id": None})
+
+
+def bulk_promote_donut_results(
+    run_id: int, user_id: int, exclude_statuses: set | None = None
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Promote all eligible results from a run.
+
+    Returns (created_accounts, errors, flagged_duplicates).
+    - errors: [{"clinic_name", "reason"}] for results that failed to create.
+    - flagged_duplicates: [{"clinic_name", "matches"}] for results that look like
+      an existing CRM account — these are *not* auto-created (dedup must warn and
+      let the user decide, never silently create or silently skip); they're left
+      untouched in the checklist for a manual per-result "Promote to CRM" decision.
+    """
+    if exclude_statuses is None:
+        exclude_statuses = {"Dead", "Not Interested"}
+    results = list_donut_run_results(run_id)
+    created = []
+    errors = []
+    flagged_duplicates = []
+    for r in results:
+        if r.get("promoted_account_id"):
+            continue
+        if r.get("call_status") in exclude_statuses:
+            continue
+        matches = find_donut_result_duplicates(r)
+        if matches:
+            flagged_duplicates.append({"clinic_name": r.get("clinic_name", "Unknown"), "matches": matches})
+            continue
+        try:
+            account = promote_donut_result(r["id"], user_id)
+            created.append(account)
+        except Exception as e:
+            errors.append({"clinic_name": r.get("clinic_name", "Unknown"), "reason": str(e)})
+    return created, errors, flagged_duplicates
+
+
+def find_donut_result_duplicates(result: dict) -> list[dict]:
+    """Check a donut run result against existing CRM accounts before promotion,
+    using the same name/phone/domain matching as manual account creation
+    (utils.dedup.find_duplicates) — promotion must warn, never silently create
+    a second account for a clinic that's already in the CRM."""
+    from utils.dedup import find_duplicates
+
+    candidate = {
+        "practice_name": result.get("clinic_name", ""),
+        "practice_phone": result.get("phone"),
+        "practice_email": result.get("email"),
+        "website": result.get("website"),
+        "city": _city_from_address(result.get("address", "")),
+    }
+    return find_duplicates(candidate, list_accounts())
+
+
+def _get_donut_channel_id() -> int | None:
+    """Get or create the 'Donut Visit' channel type."""
+    rows = get_client().table("channel_types").select("id").ilike("label", "Donut Visit").execute().data
+    if rows:
+        return rows[0]["id"]
+    try:
+        return add_channel_type("Donut Visit")
+    except Exception:
+        return None
+
+
+def _city_from_address(address: str) -> str | None:
+    """Extract city from a formatted address like '123 Main St, Plano, TX 75024'
+    or '123 Main St, Plano, TX 75024, USA' (Google Places v1 appends the country).
+    The city is whatever part sits immediately before the 'STATE ZIP' segment —
+    locating that segment by regex instead of counting from the front, since a
+    suite/unit part or a trailing country both shift a fixed offset off by one."""
+    import re
+
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    for i, part in enumerate(parts):
+        if re.match(r"^[A-Z]{2}\s+\d{5}", part) and i > 0:
+            return parts[i - 1]
+    if len(parts) >= 2:
+        return parts[-2]
+    if len(parts) == 1:
+        return parts[0]
+    return None
+
+
+def _state_from_address(address: str) -> str | None:
+    """Extract state abbreviation from a formatted address."""
+    import re
+    parts = [p.strip() for p in address.split(",")]
+    for part in reversed(parts):
+        m = re.match(r"^([A-Z]{2})\s+\d{5}", part.strip())
+        if m:
+            return m.group(1)
+    return None
