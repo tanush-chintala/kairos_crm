@@ -81,12 +81,12 @@ demos_this_week = [
 
 from utils.ui import render_kpi_card
 m = st.columns(6)
-m[0].markdown(render_kpi_card("Total accounts", len(accounts), "💼", "#475569"), unsafe_allow_html=True)
-m[1].markdown(render_kpi_card("Open pipeline", len(open_accounts), "⚡", "#2563eb"), unsafe_allow_html=True)
-m[2].markdown(render_kpi_card("Due today", len(buckets["due_today"]), "📅", "#d97706"), unsafe_allow_html=True)
-m[3].markdown(render_kpi_card("Overdue", len(buckets["overdue"]), "⚠️", "#dc2626"), unsafe_allow_html=True)
-m[4].markdown(render_kpi_card("Demos this week", len(demos_this_week), "🤝", "#7e22ce"), unsafe_allow_html=True)
-m[5].markdown(render_kpi_card("Closed won", len(won), "🏆", "#16a34a"), unsafe_allow_html=True)
+m[0].markdown(render_kpi_card("Total accounts", len(accounts), "", "#475569"), unsafe_allow_html=True)
+m[1].markdown(render_kpi_card("Open pipeline", len(open_accounts), "", "#2563eb"), unsafe_allow_html=True)
+m[2].markdown(render_kpi_card("Due today", len(buckets["due_today"]), "", "#d97706"), unsafe_allow_html=True)
+m[3].markdown(render_kpi_card("Overdue", len(buckets["overdue"]), "", "#dc2626"), unsafe_allow_html=True)
+m[4].markdown(render_kpi_card("Demos this week", len(demos_this_week), "", "#7e22ce"), unsafe_allow_html=True)
+m[5].markdown(render_kpi_card("Closed won", len(won), "", "#16a34a"), unsafe_allow_html=True)
 
 
 st.subheader("Pipeline by stage", divider=True)
