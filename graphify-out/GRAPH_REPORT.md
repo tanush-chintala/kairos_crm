@@ -1,53 +1,61 @@
 # Graph Report - .  (2026-07-31)
 
 ## Corpus Check
-- cluster-only mode — file stats not available
+- 12 files · ~48,647 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 325 nodes · 658 edges · 14 communities (13 shown, 1 thin omitted)
+- 348 nodes · 602 edges · 26 communities (18 shown, 8 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 1 edges (avg confidence: 0.5)
-- Token cost: 838 input · 33 output
-
-## Graph Freshness
-- Built from commit: `90b1a0ae`
-- Run `git rev-parse HEAD` and compare to check if the graph is stale.
-- Run `graphify update .` after code changes (no API cost).
+- Token cost: 11,248 input · 1,408 output
 
 ## Community Hubs (Navigation)
-- Database Client Operations
-- Frontend Constants and Tools
-- donut_scraper.py
-- tz.py
-- pipeline/dedup.py
-- donut_search.py
-- donut_enrichment.py
-- utils/dedup.py
-- accounts.py
-- SendBlue Text Bot
-- Developer Notes for Claude
+- SendBlue Bot Tool Layer
+- Dashboard Chatbot UI
+- Donut Search Geometry
+- Clinic Dedup Pipeline
+- Donut Scraper Page & Queries
+- Clinic Classification & Enrichment
+- CRM Query Helpers
+- Contact/Demo CRUD
+- Donut Promotion & City Parsing
+- Account Dedup Utils
+- Accounts View Forms
+- Google Places Client
+- External Services Overview
+- Supabase Client Setup
+- User Management
+- Account Creation Logging
+- Project Docs
+- Streamlit Fragment
+- Chat Transcript Doc
+- Gemini Model Reference
+- Google Places API Node
+- Requirements File
+- Supabase Service Node
 
 ## God Nodes (most connected - your core abstractions)
-1. `get_client()` - 57 edges
-2. `_render_detail()` - 29 edges
-3. `_tab_new_scrape()` - 14 edges
-4. `execTool()` - 12 edges
-5. `central_today()` - 12 edges
-6. `promote_donut_result()` - 11 edges
-7. `_entry()` - 11 edges
-8. `find_duplicates()` - 11 edges
-9. `_account_form()` - 11 edges
-10. `_render_cadence_panel()` - 11 edges
+1. `_render_detail()` - 24 edges
+2. `execTool()` - 16 edges
+3. `_render_run_detail()` - 12 edges
+4. `_entry()` - 11 edges
+5. `promote_donut_result()` - 11 edges
+6. `_account_form()` - 11 edges
+7. `_fold_persons_in_building()` - 10 edges
+8. `_tab_new_scrape()` - 10 edges
+9. `find_duplicates()` - 9 edges
+10. `findDuplicates()` - 9 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `_sidebar_chat()` --calls--> `list_bot_messages()`  [EXTRACTED]
-  app.py → db/queries.py
-- `render_creation_context()` --calls--> `list_users()`  [EXTRACTED]
-  views/donut_scraper.py → db/queries.py
+- `_dashboard_body()` --calls--> `list_accounts()`  [EXTRACTED]
+  views/dashboard.py → db/queries.py
+- `_dashboard_body()` --calls--> `list_all_demos()`  [EXTRACTED]
+  views/dashboard.py → db/queries.py
 - `_account_form()` --calls--> `add_user()`  [EXTRACTED]
   views/accounts.py → db/queries.py
-- `_account_form()` --calls--> `add_channel_type()`  [EXTRACTED]
+- `_render_detail()` --calls--> `add_user()`  [EXTRACTED]
   views/accounts.py → db/queries.py
-- `_render_list()` --calls--> `list_accounts()`  [EXTRACTED]
+- `_account_form()` --calls--> `add_channel_type()`  [EXTRACTED]
   views/accounts.py → db/queries.py
 
 ## Import Cycles
@@ -56,67 +64,87 @@
 ## Hyperedges (group relationships)
 - **CRM Text Bot Integration** — supabase_functions_sendblue_bot, gemini_api, sendblue_api, supabase_project [EXTRACTED 1.00]
 
-## Communities (14 total, 1 thin omitted)
+## Communities (26 total, 8 thin omitted)
 
-### Community 0 - "Database Client Operations"
-Cohesion: 0.06
-Nodes (71): cache_resource, Client, get_client(), _secret(), add_channel_type(), add_user(), bulk_create_donut_run_results(), bulk_promote_donut_results() (+63 more)
-
-### Community 1 - "Frontend Constants and Tools"
+### Community 0 - "SendBlue Bot Tool Layer"
 Cohesion: 0.07
-Nodes (43): ACCOUNT_SCOPED_TOOLS, accountName(), ACTIVITY_TYPES, CADENCE_CHANNELS, chicagoToday(), chicagoWeekday(), CLOSED_STAGES, COMPETITOR_TOOLS (+35 more)
+Nodes (47): ACCOUNT_SCOPED_TOOLS, accountName(), ACTIVITY_TYPES, CADENCE_CHANNELS, chicagoToday(), chicagoWeekday(), cityFromAddress(), CLOSED_STAGES (+39 more)
 
-### Community 2 - "donut_scraper.py"
+### Community 1 - "Dashboard Chatbot UI"
+Cohesion: 0.08
+Nodes (28): _chat_timestamp(), _render_messages(), _sidebar_chat(), datetime, list_all_demos(), list_bot_messages(), fragment, Fixed application-level enums. users and channel_types are admin-editable… (+20 more)
+
+### Community 2 - "Donut Search Geometry"
 Cohesion: 0.09
-Nodes (33): cache_data, MacroElement, adaptive_buffer_miles(), compute_buffered_outline(), compute_polygon_area_sqmi(), compute_polygon_centroid(), filter_by_polygon(), Approximate the area of the polygon in square miles. (+25 more)
+Nodes (35): adaptive_buffer_miles(), _buffered_polygon(), compute_bounding_box(), compute_buffered_outline(), compute_polygon_area_sqmi(), compute_polygon_centroid(), compute_polygon_iou(), estimate_circle_count() (+27 more)
 
-### Community 3 - "tz.py"
-Cohesion: 0.12
-Nodes (25): _chat_timestamp(), fragment, _render_messages(), _sidebar_chat(), datetime, categorize(), date, Dashboard bucketing: Due Today / Overdue / Stale / Upcoming (spec section 6).… (+17 more)
-
-### Community 4 - "pipeline/dedup.py"
+### Community 3 - "Clinic Dedup Pipeline"
 Cohesion: 0.11
 Nodes (32): _add_doctors_to_clinic(), _best_business_match(), _building_key(), _data_richness(), deduplicate_clinics(), _digits(), _domain(), _entry() (+24 more)
 
-### Community 5 - "donut_search.py"
+### Community 4 - "Donut Scraper Page & Queries"
+Cohesion: 0.10
+Nodes (28): cache_data, bulk_create_donut_run_results(), create_donut_run(), list_donut_runs(), list_users(), update_donut_run(), MacroElement, _clear_polygon_state() (+20 more)
+
+### Community 5 - "Clinic Classification & Enrichment"
+Cohesion: 0.12
+Nodes (24): classify_clinic(), _is_dso(), Returns 'DSO' | 'chain' | 'independent' | 'unknown'. Best-effort heuristic —…, _call_gemini_structured(), _confidence_rank(), enrich_clinic(), _enrich_with_gemini(), _extract_dentist_regex() (+16 more)
+
+### Community 6 - "CRM Query Helpers"
+Cohesion: 0.09
+Nodes (5): add_channel_type(), _get_donut_channel_id(), Query helpers per table. Supabase is the single source of truth — every view…, Get or create the 'Donut Visit' channel type., set_channel_type_active()
+
+### Community 7 - "Contact/Demo CRUD"
+Cohesion: 0.12
+Nodes (21): create_contact(), create_demo(), delete_account(), delete_contact(), delete_demo(), get_template(), list_activities(), list_cadence_steps() (+13 more)
+
+### Community 8 - "Donut Promotion & City Parsing"
 Cohesion: 0.14
-Nodes (25): _buffered_polygon(), compute_bounding_box(), compute_polygon_iou(), estimate_circle_count(), _expand_bbox(), get_place_details_for_donut(), _meters_to_lat_deg(), _meters_to_lng_deg() (+17 more)
+Nodes (19): bulk_promote_donut_results(), _city_from_address(), find_donut_result_duplicates(), get_account(), list_accounts(), list_donut_run_results(), promote_donut_result(), Create a CRM account from a donut run result and link them. (+11 more)
 
-### Community 6 - "donut_enrichment.py"
-Cohesion: 0.15
-Nodes (19): classify_clinic(), _is_dso(), Returns 'DSO' | 'chain' | 'independent' | 'unknown'. Best-effort heuristic —…, _call_gemini_structured(), _confidence_rank(), enrich_clinic(), _extract_dentist_regex(), _extract_dso() (+11 more)
+### Community 9 - "Account Dedup Utils"
+Cohesion: 0.23
+Nodes (11): find_batch_duplicates(), find_duplicates(), _name_core(), _norm_city(), _norm_name(), normalize_domain(), normalize_email(), normalize_phone() (+3 more)
 
-### Community 7 - "utils/dedup.py"
-Cohesion: 0.15
-Nodes (12): Fixed application-level enums. users and channel_types are admin-editable…, find_batch_duplicates(), find_duplicates(), _name_core(), _norm_city(), _norm_name(), normalize_domain(), normalize_email() (+4 more)
+### Community 10 - "Accounts View Forms"
+Cohesion: 0.26
+Nodes (12): create_account(), get_distinct_column_values(), _account_form(), _changed_fields(), _channel_select(), _custom_select(), _id_options(), _nullable_select() (+4 more)
 
-### Community 8 - "accounts.py"
-Cohesion: 0.18
-Nodes (17): get_distinct_column_values(), _account_form(), _cadence_gap_label(), _changed_fields(), _channel_select(), _custom_select(), _id_options(), _log_system() (+9 more)
-
-### Community 9 - "SendBlue Text Bot"
+### Community 12 - "External Services Overview"
 Cohesion: 0.40
 Nodes (5): Bot Transfer Guide, Google Gemini API, SendBlue API, SendBlue Text Bot, Supabase Project
 
+### Community 13 - "Supabase Client Setup"
+Cohesion: 0.50
+Nodes (4): cache_resource, Client, get_client(), _secret()
+
+### Community 14 - "User Management"
+Cohesion: 0.67
+Nodes (3): add_user(), Idempotent by name: inline creation from a dropdown can fire twice for the same…, set_user_active()
+
+### Community 15 - "Account Creation Logging"
+Cohesion: 0.67
+Nodes (3): get_donut_run(), log_account_creation(), Log how an account came to exist as the first entry in its activity log,…
+
 ## Knowledge Gaps
-- **16 isolated node(s):** `supabase`, `CLOSED_STAGES`, `LOST_REASONS`, `COMPETITOR_TOOLS`, `TOOL_DECLARATIONS` (+11 more)
+- **18 isolated node(s):** `Kairos CRM Feature Spec`, `Developer Notes for Claude`, `Supabase Project`, `Bot Transfer Guide`, `Google Gemini API` (+13 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **1 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **8 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `deduplicate_clinics()` connect `pipeline/dedup.py` to `donut_scraper.py`?**
-  _High betweenness centrality (0.143) - this node is a cross-community bridge._
-- **Why does `get_client()` connect `Database Client Operations` to `accounts.py`?**
-  _High betweenness centrality (0.033) - this node is a cross-community bridge._
-- **What connects `supabase`, `CLOSED_STAGES`, `LOST_REASONS` to the rest of the system?**
-  _16 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Database Client Operations` be split into smaller, more focused modules?**
-  _Cohesion score 0.06164383561643835 - nodes in this community are weakly interconnected._
-- **Should `Frontend Constants and Tools` be split into smaller, more focused modules?**
-  _Cohesion score 0.06938775510204082 - nodes in this community are weakly interconnected._
-- **Should `donut_scraper.py` be split into smaller, more focused modules?**
-  _Cohesion score 0.08502024291497975 - nodes in this community are weakly interconnected._
-- **Should `tz.py` be split into smaller, more focused modules?**
-  _Cohesion score 0.12121212121212122 - nodes in this community are weakly interconnected._
+- **Why does `enrich_clinic()` connect `Clinic Classification & Enrichment` to `Donut Scraper Page & Queries`?**
+  _High betweenness centrality (0.016) - this node is a cross-community bridge._
+- **Why does `_render_run_detail()` connect `Donut Promotion & City Parsing` to `Donut Scraper Page & Queries`, `Account Creation Logging`?**
+  _High betweenness centrality (0.014) - this node is a cross-community bridge._
+- **What connects `Kairos CRM Feature Spec`, `Developer Notes for Claude`, `Supabase Project` to the rest of the system?**
+  _18 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `SendBlue Bot Tool Layer` be split into smaller, more focused modules?**
+  _Cohesion score 0.06568832983927324 - nodes in this community are weakly interconnected._
+- **Should `Dashboard Chatbot UI` be split into smaller, more focused modules?**
+  _Cohesion score 0.08170731707317073 - nodes in this community are weakly interconnected._
+- **Should `Donut Search Geometry` be split into smaller, more focused modules?**
+  _Cohesion score 0.08888888888888889 - nodes in this community are weakly interconnected._
+- **Should `Clinic Dedup Pipeline` be split into smaller, more focused modules?**
+  _Cohesion score 0.11363636363636363 - nodes in this community are weakly interconnected._
