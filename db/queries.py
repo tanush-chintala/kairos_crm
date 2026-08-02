@@ -1,7 +1,7 @@
 """Query helpers per table. Supabase is the single source of truth — every
 view reads fresh through these; nothing is cached across reruns."""
 
-from __future__ import annotations
+from datetime import datetime, timezone
 
 from db.client import get_client
 
@@ -353,8 +353,12 @@ def list_donut_run_results(run_id: int) -> list[dict]:
     )
 
 
-def update_donut_run_result(result_id: int, fields: dict) -> None:
-    get_client().table("donut_run_results").update(fields).eq("id", result_id).execute()
+def update_donut_run_result(result_id: int, fields: dict, user_id: int | None = None) -> None:
+    payload = dict(fields)
+    if user_id is not None:
+        payload["updated_by"] = user_id
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    get_client().table("donut_run_results").update(payload).eq("id", result_id).execute()
 
 
 def promote_donut_result(result_id: int, user_id: int) -> dict:
@@ -384,13 +388,28 @@ def promote_donut_result(result_id: int, user_id: int) -> dict:
     }
     account = create_account(account_fields)
     log_account_creation(account)
-    update_donut_run_result(result_id, {"promoted_account_id": account["id"]})
+    now_iso = datetime.now(timezone.utc).isoformat()
+    update_donut_run_result(result_id, {
+        "promoted_account_id": account["id"],
+        "promoted_by": user_id,
+        "promoted_at": now_iso,
+        "updated_by": user_id,
+        "updated_at": now_iso,
+    })
     return account
 
 
-def unpromote_donut_result(result_id: int) -> None:
+def unpromote_donut_result(result_id: int, user_id: int | None = None) -> None:
     """Unlink a donut run result from its CRM account."""
-    update_donut_run_result(result_id, {"promoted_account_id": None})
+    fields = {
+        "promoted_account_id": None,
+        "promoted_by": None,
+        "promoted_at": None,
+    }
+    if user_id is not None:
+        fields["updated_by"] = user_id
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+    get_client().table("donut_run_results").update(fields).eq("id", result_id).execute()
 
 
 def bulk_promote_donut_results(

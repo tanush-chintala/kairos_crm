@@ -847,20 +847,24 @@ _STATUS_ROW_STYLES = {
 
 
 def _tab_scrape_runs() -> None:
-    current_user_id = st.session_state.get("current_user", {}).get("id")
-    runs = queries.list_donut_runs(user_id=current_user_id)
-    if not runs:
-        st.info("No donut scrape runs yet. Run a scrape from the **New Scrape** tab.")
-        return
-
     # If viewing a specific run
     selected_run_id = st.session_state.get("_ds_view_run")
     if selected_run_id:
         _render_run_detail(selected_run_id)
         return
 
+    _render_runs_list_fragment()
+
+
+@st.fragment(run_every=30)
+def _render_runs_list_fragment() -> None:
+    runs = queries.list_donut_runs()  # Universal: fetch runs across all users
+    if not runs:
+        st.info("No donut scrape runs yet. Run a scrape from the **New Scrape** tab.")
+        return
+
     left, right = st.columns([5, 1], vertical_alignment="center")
-    left.subheader("All Scrape Runs")
+    left.markdown("### All Scrape Runs <span style='font-size:0.8rem;color:#16a34a;font-weight:600;margin-left:10px;'>:material/sync: Live sync active (30s)</span>", unsafe_allow_html=True)
     if right.button("Refresh", icon=":material/refresh:", use_container_width=True, key="ds_refresh_runs"):
         st.rerun()
 
@@ -892,7 +896,7 @@ def _tab_scrape_runs() -> None:
         created_str = ""
         try:
             dt = datetime.fromisoformat(str(run["created_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
-            created_str = dt.strftime("%b %-d, %Y at %-I:%M %p")
+            created_str = dt.strftime("%b %-d, %Y at %-I:%M %p CT")
         except Exception:
             created_str = str(run.get("created_at", ""))[:10]
 
@@ -904,13 +908,6 @@ def _tab_scrape_runs() -> None:
         total_clinics = len(run_results) or run.get("total_clinics", 0)
 
         with st.container(border=True):
-            # A single self-contained HTML block for the info/metrics/created text
-            # carries its own background color directly via inline style, rather
-            # than trying to reach into Streamlit's internal wrapper divs with a
-            # `:has()` selector — that approach depended on undocumented DOM
-            # structure and kept silently failing to paint (empty pill artifacts,
-            # "still no color" on some runs). Inline style on a div we render
-            # ourselves always applies.
             st.markdown(
                 f"<div style='background:{st_cfg['bg']};border:1.5px solid {st_cfg['border']};"
                 f"border-radius:10px;padding:14px 16px;margin-bottom:10px;"
@@ -926,7 +923,7 @@ def _tab_scrape_runs() -> None:
                 f"<span style='color:#15803d;font-weight:600;font-size:0.75rem;'>{promoted_count} promoted to CRM</span>"
                 f"</div>"
                 f"<div style='flex:1.4;min-width:140px;font-size:0.78rem;color:#64748b;line-height:1.6;'>"
-                f"User: <strong>{creator_name}</strong><br>"
+                f"Created by: <strong>{creator_name}</strong><br>"
                 f"Date: {created_str}"
                 f"</div>"
                 f"</div>",
@@ -982,13 +979,9 @@ def _render_run_detail(run_id: int) -> None:
         return
 
     current_user_id = st.session_state.get("current_user", {}).get("id")
-    if run.get("created_by") != current_user_id:
-        # Scrape runs are per-user (like Accounts/Chatbot); this guards the direct
-        # by-ID view path, since the list view alone isn't enough to keep a run
-        # scoped to its owner if the run ID leaks into session state elsewhere.
-        st.error("This scrape run belongs to a different user.")
-        st.session_state.pop("_ds_view_run", None)
-        return
+    users_all = queries.list_users(active_only=False)
+    user_names = {u["id"]: u["name"] for u in users_all}
+    creator_name = user_names.get(run.get("created_by"), "Team User")
 
     if st.button(":material/arrow_back: Back to runs"):
         st.session_state.pop("_ds_view_run", None)
@@ -1003,8 +996,13 @@ def _render_run_detail(run_id: int) -> None:
     except Exception:
         created = str(run.get("created_at", ""))[:10]
 
-    st.caption(f"Created {created}  ·  {run['total_clinics']} clinics  ·  Status: **{run['status'].title()}**")
+    st.caption(f"Created by **{creator_name}** on {created}  ·  {run['total_clinics']} clinics  ·  Status: **{run['status'].title()}**")
 
+    _render_run_checklist_fragment(run_id, current_user_id, user_names, run)
+
+
+@st.fragment(run_every=30)
+def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, user_names: dict[int, str], run: dict) -> None:
     results = queries.list_donut_run_results(run_id)
     if not results:
         st.info("No results in this run.")
@@ -1030,7 +1028,7 @@ def _render_run_detail(run_id: int) -> None:
     with act_cols[0]:
         if st.button(":material/rocket_launch: Promote all eligible", type="primary", use_container_width=True,
                      help="Creates CRM accounts for all results NOT marked Dead or Not Interested"):
-            user_id = st.session_state["current_user"]["id"]
+            user_id = current_user_id or st.session_state["current_user"]["id"]
             with st.spinner("Promoting…"):
                 created, errors, flagged = queries.bulk_promote_donut_results(run_id, user_id)
                 if created:
@@ -1066,8 +1064,12 @@ def _render_run_detail(run_id: int) -> None:
             st.session_state.pop("_ds_view_run", None)
             st.rerun()
 
-    # Call-through checklist
-    st.markdown("### Call-Through Checklist")
+    # Call-through checklist header with live indicator
+    left_h, right_h = st.columns([4, 1], vertical_alignment="center")
+    left_h.markdown("### Call-Through Checklist <span style='font-size:0.8rem;color:#16a34a;font-weight:600;margin-left:10px;'>:material/sync: Live sync active (30s)</span>", unsafe_allow_html=True)
+    if right_h.button("Refresh", icon=":material/refresh:", use_container_width=True, key=f"ds_refresh_checklist_{run_id}"):
+        st.rerun()
+
     st.caption("Update each clinic's status as you call through them. Promote individual leads to the CRM.")
 
     # Filter
@@ -1075,6 +1077,7 @@ def _render_run_detail(run_id: int) -> None:
         "Filter by status",
         ["All"] + DONUT_CALL_STATUSES,
         default="All",
+        key=f"ds_pill_filter_{run_id}",
         label_visibility="collapsed",
     )
 
@@ -1085,13 +1088,45 @@ def _render_run_detail(run_id: int) -> None:
     for r in display_results:
         is_promoted = bool(r.get("promoted_account_id"))
         call_status = r.get("call_status", "Not Called")
-        promoted_text = " · IN CRM" if is_promoted else ""
+        promoted_by_name = user_names.get(r.get("promoted_by"))
+        promoted_text = f" · IN CRM (by {promoted_by_name})" if (is_promoted and promoted_by_name) else (" · IN CRM" if is_promoted else "")
         is_expanded = (st.session_state.get("_ds_open_expander") == r["id"])
 
         with st.expander(
             f"{r['clinic_name']}  ·  {call_status}{promoted_text}",
             expanded=is_expanded,
         ):
+            # Attribution bar
+            attrib_parts = []
+            if r.get("promoted_by"):
+                p_name = user_names.get(r.get("promoted_by"), "Team User")
+                p_time = ""
+                if r.get("promoted_at"):
+                    try:
+                        dt = datetime.fromisoformat(str(r["promoted_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
+                        p_time = dt.strftime(" on %b %-d at %-I:%M %p")
+                    except Exception:
+                        pass
+                attrib_parts.append(f"Promoted by **{p_name}**{p_time}")
+
+            if r.get("updated_by") and r.get("updated_by") != r.get("promoted_by"):
+                u_name = user_names.get(r.get("updated_by"), "Team User")
+                u_time = ""
+                if r.get("updated_at"):
+                    try:
+                        dt = datetime.fromisoformat(str(r["updated_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
+                        u_time = dt.strftime(" on %b %-d at %-I:%M %p")
+                    except Exception:
+                        pass
+                attrib_parts.append(f"Last updated by **{u_name}**{u_time}")
+
+            if attrib_parts:
+                st.markdown(
+                    f"<div style='font-size:0.75rem;color:#475569;background:#f8fafc;padding:4px 8px;"
+                    f"border-radius:4px;border:1px solid #e2e8f0;margin-bottom:8px;'>"
+                    f"{' &nbsp;·&nbsp; '.join(attrib_parts)}</div>",
+                    unsafe_allow_html=True,
+                )
 
             # Info row
             i1, i2, i3 = st.columns(3)
@@ -1126,23 +1161,31 @@ def _render_run_detail(run_id: int) -> None:
                 btn_cols = st.columns([1, 1.2, 1.8])
                 with btn_cols[0]:
                     if st.button("Update", key=f"ds_update_{r['id']}", use_container_width=True):
-                        queries.update_donut_run_result(r["id"], {
-                            "call_status": new_status,
-                            "call_notes": call_notes.strip() or None,
-                        })
+                        queries.update_donut_run_result(
+                            r["id"],
+                            {
+                                "call_status": new_status,
+                                "call_notes": call_notes.strip() or None,
+                            },
+                            user_id=current_user_id,
+                        )
                         st.session_state["_ds_open_expander"] = r["id"]
                         st.rerun()
                 with btn_cols[1]:
                     if st.button("Promote to CRM", key=f"ds_promote_{r['id']}", type="primary", use_container_width=True):
-                        queries.update_donut_run_result(r["id"], {
-                            "call_status": new_status,
-                            "call_notes": call_notes.strip() or None,
-                        })
+                        queries.update_donut_run_result(
+                            r["id"],
+                            {
+                                "call_status": new_status,
+                                "call_notes": call_notes.strip() or None,
+                            },
+                            user_id=current_user_id,
+                        )
                         matches = queries.find_donut_result_duplicates(r)
                         if matches:
                             st.session_state[f"ds_pending_promote_{r['id']}"] = True
                         else:
-                            queries.promote_donut_result(r["id"], st.session_state["current_user"]["id"])
+                            queries.promote_donut_result(r["id"], current_user_id or st.session_state["current_user"]["id"])
                         st.session_state["_ds_open_expander"] = r["id"]
                         st.rerun()
 
@@ -1152,7 +1195,7 @@ def _render_run_detail(run_id: int) -> None:
                     _show_matches(queries.find_donut_result_duplicates(r))
                     dc1, dc2 = st.columns(2)
                     if dc1.button("Promote anyway", key=f"ds_promote_anyway_{r['id']}", icon=":material/warning:"):
-                        queries.promote_donut_result(r["id"], st.session_state["current_user"]["id"])
+                        queries.promote_donut_result(r["id"], current_user_id or st.session_state["current_user"]["id"])
                         st.session_state.pop(f"ds_pending_promote_{r['id']}", None)
                         st.session_state["_ds_open_expander"] = r["id"]
                         st.rerun()
@@ -1163,10 +1206,14 @@ def _render_run_detail(run_id: int) -> None:
                 btn_cols = st.columns([1, 1.2, 1.2, 0.6])
                 with btn_cols[0]:
                     if st.button("Update", key=f"ds_update_{r['id']}", use_container_width=True):
-                        queries.update_donut_run_result(r["id"], {
-                            "call_status": new_status,
-                            "call_notes": call_notes.strip() or None,
-                        })
+                        queries.update_donut_run_result(
+                            r["id"],
+                            {
+                                "call_status": new_status,
+                                "call_notes": call_notes.strip() or None,
+                            },
+                            user_id=current_user_id,
+                        )
                         st.session_state["_ds_open_expander"] = r["id"]
                         st.rerun()
                 with btn_cols[1]:
@@ -1175,9 +1222,10 @@ def _render_run_detail(run_id: int) -> None:
                         st.switch_page("views/accounts.py")
                 with btn_cols[2]:
                     if st.button("Remove from CRM", key=f"ds_unpromote_{r['id']}", use_container_width=True):
-                        queries.unpromote_donut_result(r["id"])
+                        queries.unpromote_donut_result(r["id"], user_id=current_user_id)
                         st.session_state["_ds_open_expander"] = r["id"]
                         st.rerun()
+
 
 
 # ── Page entry point ─────────────────────────────────────────────────────────

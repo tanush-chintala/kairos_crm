@@ -47,11 +47,22 @@ create table if not exists donut_run_results (
     call_status text not null default 'Not Called',
     call_notes text,
     promoted_account_id bigint references accounts(id),
+    promoted_by bigint references users(id),
+    promoted_at timestamptz,
+    updated_by bigint references users(id),
+    updated_at timestamptz,
     created_at timestamptz not null default now()
 );
 
 create index if not exists donut_run_results_run_idx
     on donut_run_results (donut_run_id);
+
+-- ─── 6. Add user attribution columns to donut_run_results ─────────────────
+alter table donut_run_results
+    add column if not exists promoted_by bigint references users(id),
+    add column if not exists promoted_at timestamptz,
+    add column if not exists updated_by bigint references users(id),
+    add column if not exists updated_at timestamptz;
 
 -- ─── 4. Add donut_run_id FK on accounts ─────────────────────────────────────
 alter table accounts
