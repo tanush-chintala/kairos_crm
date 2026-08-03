@@ -1098,58 +1098,53 @@ def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, use
             f"{r['clinic_name']}  ·  {call_status}{promoted_text}",
             expanded=is_expanded,
         ):
-            # 1. LATEST UPDATE Highlight Box
+            # 1. ALWAYS-VISIBLE LATEST UPDATE Highlight Box
             if activities:
                 latest = activities[-1]
-                latest_user = user_names.get(latest.get("user_id"), "Team User")
+                latest_user = user_names.get(latest.get("user_id"), creator_name)
                 latest_time = ""
                 if latest.get("created_at"):
                     try:
                         dt = datetime.fromisoformat(str(latest["created_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
                         latest_time = dt.strftime("%b %-d at %-I:%M %p CT")
                     except Exception:
-                        pass
+                        latest_time = str(latest.get("created_at", ""))[:16]
                 latest_summary = latest.get("summary", "")
-                st.markdown(
-                    f"<div style='background:#f0f9ff;border:1.5px solid #bae6fd;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-family:Outfit,sans-serif;'>"
-                    f"<div style='font-size:0.72rem;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0284c7;display:flex;align-items:center;gap:6px;'>"
-                    f":material/history: LATEST UPDATE &nbsp;·&nbsp; {latest_user} &nbsp;·&nbsp; {latest_time}</div>"
-                    f"<div style='font-size:0.88rem;color:#0f172a;margin-top:4px;font-weight:600;'>"
-                    f"{latest_summary}</div></div>",
-                    unsafe_allow_html=True,
-                )
+                if latest.get("notes") and latest["notes"] not in latest_summary:
+                    latest_summary += f" — Note: {latest['notes']}"
             else:
-                # Fallback attribution bar if no activity entries logged yet
-                attrib_parts = []
-                if r.get("promoted_by"):
-                    p_name = user_names.get(r.get("promoted_by"), "Team User")
-                    p_time = ""
-                    if r.get("promoted_at"):
-                        try:
-                            dt = datetime.fromisoformat(str(r["promoted_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
-                            p_time = dt.strftime(" on %b %-d at %-I:%M %p CT")
-                        except Exception:
-                            pass
-                    attrib_parts.append(f"Promoted by **{p_name}**{p_time}")
+                # Fallback for existing runs or before donut_result_activities migration
+                upd_user_id = r.get("updated_by") or r.get("promoted_by") or run.get("created_by")
+                latest_user = user_names.get(upd_user_id, creator_name)
 
-                if r.get("updated_by") and r.get("updated_by") != r.get("promoted_by"):
-                    u_name = user_names.get(r.get("updated_by"), "Team User")
-                    u_time = ""
-                    if r.get("updated_at"):
-                        try:
-                            dt = datetime.fromisoformat(str(r["updated_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
-                            u_time = dt.strftime(" on %b %-d at %-I:%M %p CT")
-                        except Exception:
-                            pass
-                    attrib_parts.append(f"Last updated by **{u_name}**{u_time}")
+                raw_time = r.get("updated_at") or r.get("promoted_at") or r.get("created_at") or run.get("created_at")
+                latest_time = ""
+                if raw_time:
+                    try:
+                        dt = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00")).astimezone(CENTRAL)
+                        latest_time = dt.strftime("%b %-d at %-I:%M %p CT")
+                    except Exception:
+                        latest_time = str(raw_time)[:16]
 
-                if attrib_parts:
-                    st.markdown(
-                        f"<div style='font-size:0.75rem;color:#475569;background:#f8fafc;padding:6px 10px;"
-                        f"border-radius:6px;border:1px solid #e2e8f0;margin-bottom:10px;'>"
-                        f"{' &nbsp;·&nbsp; '.join(attrib_parts)}</div>",
-                        unsafe_allow_html=True,
-                    )
+                if is_promoted:
+                    prom_by = user_names.get(r.get("promoted_by"), latest_user)
+                    latest_summary = f"Promoted to CRM by {prom_by}"
+                elif call_status != "Not Called":
+                    latest_summary = f"Call status updated to '{call_status}' by {latest_user}"
+                    if r.get("call_notes"):
+                        latest_summary += f" — Note: {r['call_notes']}"
+                else:
+                    latest_summary = f"Scraped and added to run by {creator_name}"
+
+            st.markdown(
+                f"<div style='background:#f0f9ff;border:1.5px solid #bae6fd;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-family:Outfit,sans-serif;'>"
+                f"<div style='font-size:0.72rem;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0284c7;display:flex;align-items:center;gap:6px;'>"
+                f":material/history: LATEST UPDATE &nbsp;·&nbsp; {latest_user} &nbsp;·&nbsp; {latest_time}</div>"
+                f"<div style='font-size:0.88rem;color:#0f172a;margin-top:4px;font-weight:600;'>"
+                f"{latest_summary}</div></div>",
+                unsafe_allow_html=True,
+            )
+
 
             # Info row
             i1, i2, i3 = st.columns(3)
