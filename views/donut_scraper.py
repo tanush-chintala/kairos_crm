@@ -323,6 +323,7 @@ def _clear_polygon_state(p: dict) -> None:
     p["area_sqmi"] = 0.0
     p["city_state"] = None
     p["auto_buffer_miles"] = 0.5
+    p.pop("last_synced_ids", None)
 
 
 def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
@@ -783,6 +784,18 @@ def _tab_new_scrape() -> None:
                 is_transfer = edited_state.get(idx, {}).get("Transfer", True)
                 if is_transfer:
                     selected_clinics.append(c)
+
+            # Auto-save/resync to DB so scrape run record stays 100% in sync with checked items
+            current_ids = [c.get("place_id") or c.get("name") for c in selected_clinics]
+            if not p.get("saved_run_id"):
+                run_id = _save_results_to_db(selected_clinics, p, status="unsaved")
+                p["saved_run_id"] = run_id
+                p["last_synced_ids"] = current_ids
+            elif current_ids != p.get("last_synced_ids"):
+                current_status = "confirmed" if p.get("is_confirmed") else "unsaved"
+                ok = _resync_run_results(p, selected_clinics, status=current_status)
+                if ok:
+                    p["last_synced_ids"] = current_ids
 
             st.markdown("---")
 
