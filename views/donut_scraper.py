@@ -864,7 +864,13 @@ def _render_runs_list_fragment() -> None:
         return
 
     left, right = st.columns([5, 1], vertical_alignment="center")
-    left.markdown("### All Scrape Runs <span style='font-size:0.8rem;color:#16a34a;font-weight:600;margin-left:10px;'>:material/sync: Live sync active (30s)</span>", unsafe_allow_html=True)
+    left.markdown(
+        "### All Scrape Runs "
+        "<span style='font-size:0.8rem;color:#16a34a;font-weight:600;margin-left:10px;display:inline-flex;align-items:center;gap:4px;'>"
+        "<svg style='width:13px;height:13px;fill:none;stroke:#16a34a;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;' viewBox='0 0 24 24'><polyline points='23 4 23 10 17 10'></polyline><path d='M20.49 15a9 9 0 1 1-2.12-9.36L23 10'></path></svg> "
+        "Live sync active (30s)</span>",
+        unsafe_allow_html=True,
+    )
     if right.button("Refresh", icon=":material/refresh:", use_container_width=True, key="ds_refresh_runs"):
         st.rerun()
 
@@ -1067,7 +1073,13 @@ def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, use
 
     # Call-through checklist header with live indicator
     left_h, right_h = st.columns([4, 1], vertical_alignment="center")
-    left_h.markdown("### Call-Through Checklist <span style='font-size:0.8rem;color:#16a34a;font-weight:600;margin-left:10px;'>:material/sync: Live sync active (30s)</span>", unsafe_allow_html=True)
+    left_h.markdown(
+        "### Call-Through Checklist "
+        "<span style='font-size:0.8rem;color:#16a34a;font-weight:600;margin-left:10px;display:inline-flex;align-items:center;gap:4px;'>"
+        "<svg style='width:13px;height:13px;fill:none;stroke:#16a34a;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;' viewBox='0 0 24 24'><polyline points='23 4 23 10 17 10'></polyline><path d='M20.49 15a9 9 0 1 1-2.12-9.36L23 10'></path></svg> "
+        "Live sync active (30s)</span>",
+        unsafe_allow_html=True,
+    )
     if right_h.button("Refresh", icon=":material/refresh:", use_container_width=True, key=f"ds_refresh_checklist_{run_id}"):
         st.rerun()
 
@@ -1140,7 +1152,8 @@ def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, use
             st.markdown(
                 f"<div style='background:#f0f9ff;border:1.5px solid #bae6fd;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-family:Outfit,sans-serif;'>"
                 f"<div style='font-size:0.72rem;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0284c7;display:flex;align-items:center;gap:6px;'>"
-                f":material/history: LATEST UPDATE &nbsp;·&nbsp; {latest_user} &nbsp;·&nbsp; {latest_time}</div>"
+                f"<svg style='width:13px;height:13px;fill:none;stroke:#0284c7;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg> "
+                f"LATEST UPDATE &nbsp;·&nbsp; {latest_user} &nbsp;·&nbsp; {latest_time}</div>"
                 f"<div style='font-size:0.88rem;color:#0f172a;margin-top:4px;font-weight:600;'>"
                 f"{latest_summary}</div></div>",
                 unsafe_allow_html=True,
