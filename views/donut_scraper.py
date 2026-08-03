@@ -424,9 +424,14 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
     return polygon_coords
 
 
-def _render_results_map(clinics: list[dict], zone_filter: str = "All") -> None:
-    """Display-only map with clinic pins."""
-    p = st.session_state._donut_pipeline
+def _render_results_map(
+    clinics: list[dict],
+    zone_filter: str = "All",
+    polygon_coords: list[list[float]] | None = None,
+    buffer_miles: float = 0.0,
+    key_prefix: str = "donut_results_map",
+) -> None:
+    """Display-only map with clinic pins and optional polygon/buffer overlays."""
     display = list(clinics)
     if zone_filter == "Core only":
         display = [c for c in display if c.get("inclusion_zone") == "core"]
@@ -437,6 +442,11 @@ def _render_results_map(clinics: list[dict], zone_filter: str = "All") -> None:
     if display:
         lats = [c.get("lat", 0) for c in display if c.get("lat")]
         lngs = [c.get("lng", 0) for c in display if c.get("lng")]
+        if lats:
+            center_lat, center_lng = sum(lats) / len(lats), sum(lngs) / len(lngs)
+    elif polygon_coords and len(polygon_coords) >= 3:
+        lats = [c[1] for c in polygon_coords]
+        lngs = [c[0] for c in polygon_coords]
         if lats:
             center_lat, center_lng = sum(lats) / len(lats), sum(lngs) / len(lngs)
 
@@ -450,11 +460,35 @@ def _render_results_map(clinics: list[dict], zone_filter: str = "All") -> None:
         "font-weight:600;font-size:11px;padding:2px 6px;}"
         ".leaflet-tooltip.ds-zoom-label:before{display:none;}"
         ".ds-show-labels .leaflet-tooltip.ds-zoom-label{display:block;}"
+        ".ds-buffer-ring,.ds-core-poly{pointer-events:none !important;}"
         "</style>"
     ))
     m.add_child(_ZoomLabels(min_zoom=14))
 
     pts = []
+
+    # Draw polygon & buffer if present
+    if polygon_coords and len(polygon_coords) >= 3:
+        for c in polygon_coords:
+            pts.append([c[1], c[0]])
+        if buffer_miles > 0:
+            outline = compute_buffered_outline(polygon_coords, buffer_miles)
+            if outline:
+                folium.Polygon(
+                    locations=[[c[1], c[0]] for c in outline],
+                    color="#3abdaf", weight=2, dash_array="6,6",
+                    fill=True, fill_color="#3abdaf", fill_opacity=0.06,
+                    class_name="ds-buffer-ring",
+                ).add_to(m)
+                for c in outline:
+                    pts.append([c[1], c[0]])
+        folium.Polygon(
+            locations=[[c[1], c[0]] for c in polygon_coords],
+            color="#183e34", weight=2,
+            fill=True, fill_color="#183e34", fill_opacity=0.08,
+            class_name="ds-core-poly",
+        ).add_to(m)
+
     for c in display:
         lat, lng = c.get("lat"), c.get("lng")
         if lat and lng:
@@ -462,19 +496,36 @@ def _render_results_map(clinics: list[dict], zone_filter: str = "All") -> None:
             color = "#183e34" if is_core else "#4b5563"
             fill = "#3abdaf" if is_core else "#9ca3af"
             name = c.get("name") or c.get("clinic_name", "Clinic")
+            call_st = c.get("call_status", "")
+            badge = f" ({call_st})" if call_st and call_st != "Not Called" else ""
+
+            popup_lines = [f"<b>{name}</b>"]
+            if c.get("classification"):
+                popup_lines.append(f"Class: {c['classification']}")
+            if c.get("address"):
+                popup_lines.append(f"Address: {c['address']}")
+            popup_lines.append(f"Zone: {(c.get('inclusion_zone') or '').capitalize()}")
+            if call_st:
+                popup_lines.append(f"Call Status: {call_st}")
+            if c.get("phone"):
+                popup_lines.append(f"Phone: {c['phone']}")
+
+            popup_html = "<br>".join(popup_lines)
+
             folium.CircleMarker(
                 location=[lat, lng], radius=6,
-                tooltip=folium.Tooltip(name, permanent=True, direction="top",
+                tooltip=folium.Tooltip(f"{name}{badge}", permanent=True, direction="top",
                                        className="ds-zoom-label"),
-                popup=folium.Popup(name, max_width=250),
+                popup=folium.Popup(popup_html, max_width=250),
                 color=color, fill=True, fill_color=fill, fill_opacity=0.8, weight=1.5,
             ).add_to(m)
             pts.append([lat, lng])
+
     if pts:
         m.fit_bounds(pts, padding=(30, 30))
 
     st_folium(m, use_container_width=True, height=400,
-              key=f"donut_results_map_{zone_filter}",
+              key=f"{key_prefix}_{zone_filter}",
               returned_objects=["last_object_clicked", "zoom"])
 
 
@@ -740,7 +791,13 @@ def _tab_new_scrape() -> None:
                 "Map filter", ["All", "Core only", "Buffer only"],
                 default="All", key="ds_map_zone", label_visibility="collapsed",
             ) or "All"
-            _render_results_map(selected_clinics, zone)
+            _render_results_map(
+                selected_clinics,
+                zone,
+                polygon_coords=p.get("polygon_coords"),
+                buffer_miles=p.get("buffer_miles", 0.0),
+                key_prefix="ds_new_scrape_results_map",
+            )
 
             # 2. METRICS BAR
             core = [c for c in selected_clinics if c.get("inclusion_zone") == "core"]
@@ -1014,6 +1071,34 @@ def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, use
     if not results:
         st.info("No results in this run.")
         return
+
+    # Map visualization of the run
+    zone_run_map = st.segmented_control(
+        "Map filter", ["All", "Core only", "Buffer only"],
+        default="All", key=f"ds_run_map_zone_{run_id}", label_visibility="collapsed",
+    ) or "All"
+
+    poly_raw = run.get("polygon_geojson")
+    polygon_coords = None
+    if isinstance(poly_raw, list):
+        polygon_coords = poly_raw
+    elif isinstance(poly_raw, str):
+        try:
+            polygon_coords = json.loads(poly_raw)
+        except Exception:
+            polygon_coords = None
+
+    buffer_miles = float(run.get("buffer_miles") or 0.0)
+
+    _render_results_map(
+        clinics=results,
+        zone_filter=zone_run_map,
+        polygon_coords=polygon_coords,
+        buffer_miles=buffer_miles,
+        key_prefix=f"ds_run_detail_map_{run_id}",
+    )
+
+    st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
     # Stats
     statuses = {}
