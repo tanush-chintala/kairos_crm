@@ -1003,6 +1003,7 @@ def _render_run_detail(run_id: int) -> None:
 
 @st.fragment(run_every=30)
 def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, user_names: dict[int, str], run: dict) -> None:
+    creator_name = user_names.get(run.get("created_by"), "Team User")
     results = queries.list_donut_run_results(run_id)
     if not results:
         st.info("No results in this run.")
