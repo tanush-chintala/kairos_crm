@@ -1092,41 +1092,64 @@ def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, use
         promoted_text = f" · IN CRM (by {promoted_by_name})" if (is_promoted and promoted_by_name) else (" · IN CRM" if is_promoted else "")
         is_expanded = (st.session_state.get("_ds_open_expander") == r["id"])
 
+        activities = queries.list_donut_result_activities(r["id"])
+
         with st.expander(
             f"{r['clinic_name']}  ·  {call_status}{promoted_text}",
             expanded=is_expanded,
         ):
-            # Attribution bar
-            attrib_parts = []
-            if r.get("promoted_by"):
-                p_name = user_names.get(r.get("promoted_by"), "Team User")
-                p_time = ""
-                if r.get("promoted_at"):
+            # 1. LATEST UPDATE Highlight Box
+            if activities:
+                latest = activities[-1]
+                latest_user = user_names.get(latest.get("user_id"), "Team User")
+                latest_time = ""
+                if latest.get("created_at"):
                     try:
-                        dt = datetime.fromisoformat(str(r["promoted_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
-                        p_time = dt.strftime(" on %b %-d at %-I:%M %p")
+                        dt = datetime.fromisoformat(str(latest["created_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
+                        latest_time = dt.strftime("%b %-d at %-I:%M %p CT")
                     except Exception:
                         pass
-                attrib_parts.append(f"Promoted by **{p_name}**{p_time}")
-
-            if r.get("updated_by") and r.get("updated_by") != r.get("promoted_by"):
-                u_name = user_names.get(r.get("updated_by"), "Team User")
-                u_time = ""
-                if r.get("updated_at"):
-                    try:
-                        dt = datetime.fromisoformat(str(r["updated_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
-                        u_time = dt.strftime(" on %b %-d at %-I:%M %p")
-                    except Exception:
-                        pass
-                attrib_parts.append(f"Last updated by **{u_name}**{u_time}")
-
-            if attrib_parts:
+                latest_summary = latest.get("summary", "")
                 st.markdown(
-                    f"<div style='font-size:0.75rem;color:#475569;background:#f8fafc;padding:4px 8px;"
-                    f"border-radius:4px;border:1px solid #e2e8f0;margin-bottom:8px;'>"
-                    f"{' &nbsp;·&nbsp; '.join(attrib_parts)}</div>",
+                    f"<div style='background:#f0f9ff;border:1.5px solid #bae6fd;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-family:Outfit,sans-serif;'>"
+                    f"<div style='font-size:0.72rem;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0284c7;display:flex;align-items:center;gap:6px;'>"
+                    f":material/history: LATEST UPDATE &nbsp;·&nbsp; {latest_user} &nbsp;·&nbsp; {latest_time}</div>"
+                    f"<div style='font-size:0.88rem;color:#0f172a;margin-top:4px;font-weight:600;'>"
+                    f"{latest_summary}</div></div>",
                     unsafe_allow_html=True,
                 )
+            else:
+                # Fallback attribution bar if no activity entries logged yet
+                attrib_parts = []
+                if r.get("promoted_by"):
+                    p_name = user_names.get(r.get("promoted_by"), "Team User")
+                    p_time = ""
+                    if r.get("promoted_at"):
+                        try:
+                            dt = datetime.fromisoformat(str(r["promoted_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
+                            p_time = dt.strftime(" on %b %-d at %-I:%M %p CT")
+                        except Exception:
+                            pass
+                    attrib_parts.append(f"Promoted by **{p_name}**{p_time}")
+
+                if r.get("updated_by") and r.get("updated_by") != r.get("promoted_by"):
+                    u_name = user_names.get(r.get("updated_by"), "Team User")
+                    u_time = ""
+                    if r.get("updated_at"):
+                        try:
+                            dt = datetime.fromisoformat(str(r["updated_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
+                            u_time = dt.strftime(" on %b %-d at %-I:%M %p CT")
+                        except Exception:
+                            pass
+                    attrib_parts.append(f"Last updated by **{u_name}**{u_time}")
+
+                if attrib_parts:
+                    st.markdown(
+                        f"<div style='font-size:0.75rem;color:#475569;background:#f8fafc;padding:6px 10px;"
+                        f"border-radius:6px;border:1px solid #e2e8f0;margin-bottom:10px;'>"
+                        f"{' &nbsp;·&nbsp; '.join(attrib_parts)}</div>",
+                        unsafe_allow_html=True,
+                    )
 
             # Info row
             i1, i2, i3 = st.columns(3)
@@ -1138,7 +1161,7 @@ def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, use
             if r.get("website"):
                 st.caption(f"Website: {r['website']}")
 
-            # Update status
+            # Update status inputs
             c1, c2 = st.columns([1, 2])
             with c1:
                 current_idx = DONUT_CALL_STATUSES.index(r.get("call_status", "Not Called")) if r.get("call_status") in DONUT_CALL_STATUSES else 0
@@ -1156,6 +1179,29 @@ def _render_run_checklist_fragment(run_id: int, current_user_id: int | None, use
                     placeholder="Notes from the call…",
                     label_visibility="collapsed",
                 )
+
+            # Collapsible Full Activity History timeline
+            if activities:
+                with st.expander(f":material/history: View activity history ({len(activities)})", expanded=False):
+                    for act in reversed(activities):
+                        act_user = user_names.get(act.get("user_id"), "Team User")
+                        act_time = ""
+                        if act.get("created_at"):
+                            try:
+                                dt = datetime.fromisoformat(str(act["created_at"]).replace("Z", "+00:00")).astimezone(CENTRAL)
+                                act_time = dt.strftime("%b %-d, %Y at %-I:%M %p CT")
+                            except Exception:
+                                pass
+                        st.markdown(
+                            f"<div style='font-size:0.82rem;font-family:Outfit,sans-serif;margin-bottom:4px;'>"
+                            f"<strong>{act_user}</strong> &nbsp;·&nbsp; <span style='color:#64748b;font-size:0.78rem;'>{act_time}</span><br>"
+                            f"<span style='color:#0f172a;'>{act.get('summary', '')}</span>"
+                            + (f"<br><em style='color:#475569;'>Note: {act['notes']}</em>" if act.get("notes") and act["notes"] not in act.get("summary", "") else "")
+                            + "</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown("<hr style='margin:4px 0 8px 0;border:0;border-top:1px solid #f1f5f9;'>", unsafe_allow_html=True)
+
 
             if not is_promoted:
                 btn_cols = st.columns([1, 1.2, 1.8])

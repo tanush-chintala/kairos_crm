@@ -339,10 +339,61 @@ def create_donut_run_result(fields: dict) -> dict:
     return get_client().table("donut_run_results").insert(fields).execute().data[0]
 
 
-def bulk_create_donut_run_results(rows: list[dict]) -> list[dict]:
+def log_donut_result_activity(
+    result_id: int,
+    user_id: int | None,
+    activity_type: str,
+    summary: str,
+    notes: str | None = None,
+    created_at: str | None = None,
+) -> dict | None:
+    """Record a pre-CRM activity for a donut run result (status update, call note, etc.)."""
+    payload = {
+        "donut_run_result_id": result_id,
+        "user_id": user_id,
+        "activity_type": activity_type,
+        "summary": summary,
+        "notes": notes.strip() if notes else None,
+    }
+    if created_at:
+        payload["created_at"] = created_at
+    try:
+        res = get_client().table("donut_result_activities").insert(payload).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        # Fallback if table doesn't exist yet
+        return None
+
+
+def list_donut_result_activities(result_id: int) -> list[dict]:
+    """Fetch all pre-CRM activity log entries for a result in chronological order."""
+    try:
+        return (
+            get_client().table("donut_result_activities").select("*")
+            .eq("donut_run_result_id", result_id)
+            .order("created_at", desc=False).execute().data or []
+        )
+    except Exception:
+        return []
+
+
+def bulk_create_donut_run_results(rows: list[dict], user_id: int | None = None) -> list[dict]:
     if not rows:
         return []
-    return get_client().table("donut_run_results").insert(rows).execute().data
+    inserted = get_client().table("donut_run_results").insert(rows).execute().data
+    if inserted:
+        user_name = "Team User"
+        if user_id:
+            users = list_users(active_only=False)
+            user_name = next((u["name"] for u in users if u["id"] == user_id), "Team User")
+        for res_row in inserted:
+            log_donut_result_activity(
+                result_id=res_row["id"],
+                user_id=user_id,
+                activity_type="Scraped",
+                summary=f"Scraped and added to list by {user_name}",
+            )
+    return inserted
 
 
 def list_donut_run_results(run_id: int) -> list[dict]:
@@ -365,14 +416,41 @@ def update_donut_run_result(result_id: int, fields: dict, user_id: int | None = 
         if user_id is not None and ("updated_by" in payload or "updated_at" in payload):
             try:
                 get_client().table("donut_run_results").update(fields).eq("id", result_id).execute()
-                return
             except Exception:
                 pass
-        raise e
+        else:
+            raise e
+
+    # Automatically record a pre-CRM activity entry if call_status or call_notes changed
+    if "call_status" in fields or "call_notes" in fields:
+        user_name = "Team User"
+        if user_id:
+            users = list_users(active_only=False)
+            user_name = next((u["name"] for u in users if u["id"] == user_id), "Team User")
+
+        new_status = fields.get("call_status")
+        notes = fields.get("call_notes")
+        summary_parts = []
+        if new_status:
+            summary_parts.append(f"Updated call status to '{new_status}' by {user_name}")
+        if notes:
+            summary_parts.append(f"Call Note: {notes}")
+
+        summary = " — ".join(summary_parts) if summary_parts else f"Updated by {user_name}"
+        log_donut_result_activity(
+            result_id=result_id,
+            user_id=user_id,
+            activity_type="Call Update" if new_status else "Note",
+            summary=summary,
+            notes=notes,
+        )
 
 
 def promote_donut_result(result_id: int, user_id: int) -> dict:
-    """Create a CRM account from a donut run result and link them."""
+    """Create a CRM account from a donut run result, copy pre-CRM activity log to CRM, and link them."""
+    from utils.tz import CENTRAL
+    from datetime import date
+
     result = get_client().table("donut_run_results").select("*").eq("id", result_id).execute().data
     if not result:
         raise ValueError(f"Donut result {result_id} not found")
@@ -398,6 +476,50 @@ def promote_donut_result(result_id: int, user_id: int) -> dict:
     }
     account = create_account(account_fields)
     log_account_creation(account)
+
+    # File all pre-CRM activity history directly into the CRM activities table
+    pre_activities = list_donut_result_activities(result_id)
+    if pre_activities:
+        for act in pre_activities:
+            act_date = date.today().isoformat()
+            if act.get("created_at"):
+                try:
+                    act_date = datetime.fromisoformat(str(act["created_at"]).replace("Z", "+00:00")).astimezone(CENTRAL).date().isoformat()
+                except Exception:
+                    pass
+            act_raw_type = act.get("activity_type", "Note")
+            if act_raw_type == "Scraped":
+                act_type = "Donut Visit"
+            elif act_raw_type in ("Call Update", "Status Change"):
+                act_type = "Call"
+            else:
+                act_type = "Note"
+
+            summary_text = act.get("summary") or "Pre-CRM Scraper Activity"
+
+            log_activity({
+                "account_id": account["id"],
+                "date": act_date,
+                "kairos_owner_id": act.get("user_id") or user_id,
+                "activity_type": act_type,
+                "summary": summary_text,
+                "is_system": False,
+            })
+    else:
+        # Fallback if no pre-CRM activity records exist
+        user_name = "Team User"
+        if user_id:
+            users = list_users(active_only=False)
+            user_name = next((u["name"] for u in users if u["id"] == user_id), "Team User")
+        log_activity({
+            "account_id": account["id"],
+            "date": date.today().isoformat(),
+            "kairos_owner_id": user_id,
+            "activity_type": "Donut Visit",
+            "summary": f"Imported from Donut Scrape (Run #{r['donut_run_id']}) by {user_name}",
+            "is_system": False,
+        })
+
     now_iso = datetime.now(timezone.utc).isoformat()
     full_update = {
         "promoted_account_id": account["id"],

@@ -85,3 +85,18 @@ left join lateral (
     order by date desc, id desc
     limit 1
 ) la on true;
+
+-- ─── 7. Donut result activities (pre-CRM calling activity log) ──────────────
+create table if not exists donut_result_activities (
+    id bigint generated always as identity primary key,
+    donut_run_result_id bigint not null references donut_run_results(id) on delete cascade,
+    user_id bigint references users(id),
+    activity_type text not null default 'Note',  -- 'Scraped', 'Call Update', 'Note', 'Status Change'
+    summary text not null,
+    notes text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists donut_result_activities_result_idx
+    on donut_result_activities (donut_run_result_id);
+
