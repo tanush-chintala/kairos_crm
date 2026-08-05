@@ -23,6 +23,23 @@ create table cadences (
     active boolean not null default true
 );
 
+-- Donut Scraper runs (pipeline/ + views/donut_scraper.py). Scraped clinics
+-- stage in donut_run_results until promoted into accounts. Defined before
+-- accounts so accounts.donut_run_id can reference it.
+create table donut_runs (
+    id bigint generated always as identity primary key,
+    run_name text not null,
+    area_name text,
+    polygon_geojson jsonb,
+    buffer_miles numeric(4,2),
+    total_clinics int not null default 0,
+    new_clinics int not null default 0,
+    reused_clinics int not null default 0,
+    status text not null default 'pending',  -- pending | confirmed | archived
+    created_by bigint references users(id),
+    created_at timestamptz not null default now()
+);
+
 create table accounts (
     id bigint generated always as identity primary key,
     practice_name text not null,
@@ -51,7 +68,11 @@ create table accounts (
     decision_maker_reached text not null default 'Unknown',
     cadence_id bigint references cadences(id),
     cadence_step_order int,
-    cadence_paused boolean not null default false
+    cadence_paused boolean not null default false,
+    creation_source text not null default 'manual',  -- CREATION_SOURCES in utils/constants.py
+    creation_reason text,
+    creation_user_id bigint references users(id),
+    donut_run_id bigint references donut_runs(id)
 );
 
 create table contacts (
@@ -90,6 +111,51 @@ create table demos (
     follow_up_required text,
     created_at timestamptz not null default now()
 );
+
+-- promoted_account_id is set null on account delete so deleting a promoted
+-- account unlinks the staging row instead of failing.
+create table donut_run_results (
+    id bigint generated always as identity primary key,
+    donut_run_id bigint not null references donut_runs(id) on delete cascade,
+    place_id text,
+    clinic_name text not null,
+    classification text,
+    address text,
+    lat numeric(10,7),
+    lng numeric(10,7),
+    inclusion_zone text,          -- 'core' | 'buffer'
+    phone text,
+    website text,
+    email text,
+    email_source text,
+    head_dentist text,
+    staff_source text,
+    hours_json jsonb,
+    notes text,
+    call_status text not null default 'Not Called',  -- DONUT_CALL_STATUSES in utils/constants.py
+    call_notes text,
+    promoted_account_id bigint references accounts(id) on delete set null,
+    promoted_by bigint references users(id),
+    promoted_at timestamptz,
+    updated_by bigint references users(id),
+    updated_at timestamptz,
+    created_at timestamptz not null default now()
+);
+
+create index donut_run_results_run_idx on donut_run_results (donut_run_id);
+
+-- Pre-CRM calling activity log for staged clinics.
+create table donut_result_activities (
+    id bigint generated always as identity primary key,
+    donut_run_result_id bigint not null references donut_run_results(id) on delete cascade,
+    user_id bigint references users(id),
+    activity_type text not null default 'Note',  -- 'Scraped', 'Call Update', 'Note', 'Status Change'
+    summary text not null,
+    notes text,
+    created_at timestamptz not null default now()
+);
+
+create index donut_result_activities_result_idx on donut_result_activities (donut_run_result_id);
 
 create table email_templates (
     id bigint generated always as identity primary key,
