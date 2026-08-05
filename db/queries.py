@@ -472,6 +472,24 @@ def promote_donut_result(result_id: int, user_id: int) -> dict:
         # Already promoted
         return get_account(r["promoted_account_id"])
 
+    call_status = r.get("call_status", "Not Called")
+    pipeline_stage = "New Lead"
+    lost_reason = None
+    if call_status in ("Dead", "Not Interested"):
+        pipeline_stage = "Closed Lost"
+        lost_reason = "Dentist/owner not interested" if call_status == "Not Interested" else "Other"
+    elif call_status == "Interested":
+        pipeline_stage = "Interested"
+    elif call_status in ("Call Back Later", "No Answer", "Left Voicemail"):
+        pipeline_stage = "Contacted"
+
+    notes_parts = []
+    if r.get("notes"):
+        notes_parts.append(r["notes"])
+    if r.get("call_notes"):
+        notes_parts.append(f"Call Notes: {r['call_notes']}")
+    initial_encounter_summary = "\n\n".join(notes_parts) if notes_parts else None
+
     account_fields = {
         "practice_name": r["clinic_name"],
         "practice_email": r.get("email") or None,
@@ -479,15 +497,17 @@ def promote_donut_result(result_id: int, user_id: int) -> dict:
         "website": r.get("website") or None,
         "city": _city_from_address(r.get("address", "")),
         "state": _state_from_address(r.get("address", "")),
-        "pipeline_stage": "New Lead",
+        "pipeline_stage": pipeline_stage,
         "source_detail": f"Donut Scrape — {r.get('classification') or 'dental clinic'}",
-        "initial_encounter_summary": r.get("notes"),
+        "initial_encounter_summary": initial_encounter_summary,
         "creation_source": "donut_scrape",
         "kairos_owner_id": user_id,
         "creation_user_id": user_id,
         "donut_run_id": r["donut_run_id"],
         "channel_type_id": _get_donut_channel_id(),
     }
+    if lost_reason:
+        account_fields["lost_reason"] = lost_reason
     account = create_account(account_fields)
     log_account_creation(account)
 
