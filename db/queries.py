@@ -570,7 +570,12 @@ def promote_donut_result(result_id: int, user_id: int) -> dict:
 
 
 def unpromote_donut_result(result_id: int, user_id: int | None = None) -> None:
-    """Unlink a donut run result from its CRM account."""
+    """Unlink a donut run result from its CRM account and delete the account."""
+    result = get_client().table("donut_run_results").select("promoted_account_id").eq("id", result_id).execute().data
+    if not result:
+        return
+    account_id = result[0].get("promoted_account_id")
+
     fields = {
         "promoted_account_id": None,
         "promoted_by": None,
@@ -583,6 +588,12 @@ def unpromote_donut_result(result_id: int, user_id: int | None = None) -> None:
         get_client().table("donut_run_results").update(fields).eq("id", result_id).execute()
     except Exception:
         get_client().table("donut_run_results").update({"promoted_account_id": None}).eq("id", result_id).execute()
+        
+    if account_id:
+        try:
+            delete_account(account_id)
+        except Exception:
+            pass
 
 
 def bulk_promote_donut_results(
