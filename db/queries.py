@@ -473,15 +473,12 @@ def promote_donut_result(result_id: int, user_id: int) -> dict:
         return get_account(r["promoted_account_id"])
 
     call_status = r.get("call_status", "Not Called")
-    pipeline_stage = "New Lead"
+    pipeline_stage = "New Lead" if call_status == "Not Called" else call_status
     lost_reason = None
-    if call_status in ("Dead", "Not Interested"):
-        pipeline_stage = "Closed Lost"
-        lost_reason = "Dentist/owner not interested" if call_status == "Not Interested" else "Other"
-    elif call_status == "Interested":
-        pipeline_stage = "Interested"
-    elif call_status in ("Call Back Later", "No Answer", "Left Voicemail"):
-        pipeline_stage = "Contacted"
+    if call_status == "Not Interested":
+        lost_reason = "Dentist/owner not interested"
+    elif call_status == "Dead":
+        lost_reason = "Other"
 
     notes_parts = []
     if r.get("notes"):

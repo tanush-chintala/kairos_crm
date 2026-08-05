@@ -3,6 +3,10 @@ tables instead (spec section 4) — everything here stays hardcoded for v1."""
 
 PIPELINE_STAGES = [
     "New Lead",
+    "Not Called",
+    "No Answer",
+    "Left Voicemail",
+    "Call Back Later",
     "Contacted",
     "Interested",
     "Demo Scheduled",
@@ -10,10 +14,12 @@ PIPELINE_STAGES = [
     "Onboarding",
     "Closed Won",
     "Closed Lost",
+    "Not Interested",
+    "Dead",
     "Nurture Later",
 ]
 
-CLOSED_STAGES = {"Closed Won", "Closed Lost", "Nurture Later"}
+CLOSED_STAGES = {"Closed Won", "Closed Lost", "Nurture Later", "Not Interested", "Dead"}
 
 ACTIVITY_TYPES = [
     "In-person visit",
