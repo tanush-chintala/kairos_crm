@@ -931,6 +931,11 @@ _STATUS_ROW_STYLES = {
 
 
 def _tab_scrape_runs() -> None:
+    selected_map_run_id = st.session_state.get("_ds_view_map_for_run")
+    if selected_map_run_id:
+        _render_map_view(selected_map_run_id)
+        return
+
     # If viewing a specific run
     selected_run_id = st.session_state.get("_ds_view_run")
     if selected_run_id:
@@ -1021,7 +1026,7 @@ def _render_runs_list_fragment() -> None:
             )
 
             if status in ("confirmed", "saved"):
-                ac1, ac2, ac3 = st.columns([1.1, 1.3, 1.1])
+                ac1, ac2, ac3, ac4 = st.columns([1.1, 1.3, 1.1, 1.1])
                 with ac1:
                     if st.button("Open", key=f"ds_open_run_{run['id']}", type="primary", use_container_width=True):
                         st.session_state["_ds_view_run"] = run["id"]
@@ -1031,21 +1036,29 @@ def _render_runs_list_fragment() -> None:
                         queries.update_donut_run(run["id"], {"status": "unsaved"})
                         st.rerun()
                 with ac3:
+                    if st.button("Map", key=f"ds_map_run_{run['id']}", use_container_width=True):
+                        st.session_state["_ds_view_map_for_run"] = run["id"]
+                        st.rerun()
+                with ac4:
                     if st.button("Archive", key=f"ds_archive_{run['id']}", use_container_width=True):
                         queries.update_donut_run(run["id"], {"status": "archived"})
                         st.rerun()
             elif status == "archived":
-                ac1, ac2 = st.columns(2)
+                ac1, ac2, ac3 = st.columns([1.1, 1.3, 1.1])
                 with ac1:
                     if st.button("Open", key=f"ds_open_run_{run['id']}", type="primary", use_container_width=True):
                         st.session_state["_ds_view_run"] = run["id"]
                         st.rerun()
                 with ac2:
+                    if st.button("Map", key=f"ds_map_run_{run['id']}", use_container_width=True):
+                        st.session_state["_ds_view_map_for_run"] = run["id"]
+                        st.rerun()
+                with ac3:
                     if st.button("Unarchive", key=f"ds_unarchive_run_{run['id']}", use_container_width=True):
                         queries.update_donut_run(run["id"], {"status": "unsaved"})
                         st.rerun()
             else:  # unsaved / pending
-                ac1, ac2, ac3 = st.columns([1.1, 1.3, 1.1])
+                ac1, ac2, ac3, ac4 = st.columns([1.1, 1.3, 1.1, 1.1])
                 with ac1:
                     if st.button("Open", key=f"ds_open_run_{run['id']}", type="primary", use_container_width=True):
                         st.session_state["_ds_view_run"] = run["id"]
@@ -1055,9 +1068,37 @@ def _render_runs_list_fragment() -> None:
                         queries.update_donut_run(run["id"], {"status": "confirmed"})
                         st.rerun()
                 with ac3:
+                    if st.button("Map", key=f"ds_map_run_{run['id']}", use_container_width=True):
+                        st.session_state["_ds_view_map_for_run"] = run["id"]
+                        st.rerun()
+                with ac4:
                     if st.button("Archive", key=f"ds_archive_{run['id']}", use_container_width=True):
                         queries.update_donut_run(run["id"], {"status": "archived"})
                         st.rerun()
+
+
+def _render_map_view(run_id: int) -> None:
+    """Blank placeholder for the map view."""
+    run = queries.get_donut_run(run_id)
+    if not run:
+        st.session_state.pop("_ds_view_map_for_run", None)
+        st.rerun()
+        return
+
+    btn_col1, btn_col2, _ = st.columns([2, 2, 6])
+    with btn_col1:
+        if st.button(":material/arrow_back: Back to run details", use_container_width=True):
+            st.session_state.pop("_ds_view_map_for_run", None)
+            st.session_state["_ds_view_run"] = run_id
+            st.rerun()
+    with btn_col2:
+        if st.button(":material/arrow_back: Back to runs list", use_container_width=True):
+            st.session_state.pop("_ds_view_map_for_run", None)
+            st.session_state.pop("_ds_view_run", None)
+            st.rerun()
+
+    st.title(f"Map View: {run['run_name']}")
+    st.info("Map placeholder – specific instructions will be provided.")
 
 
 def _render_run_detail(run_id: int) -> None:
@@ -1073,9 +1114,15 @@ def _render_run_detail(run_id: int) -> None:
     user_names = {u["id"]: u["name"] for u in users_all}
     creator_name = user_names.get(run.get("created_by"), "Team User")
 
-    if st.button(":material/arrow_back: Back to runs"):
-        st.session_state.pop("_ds_view_run", None)
-        st.rerun()
+    btn_col1, btn_col2, _ = st.columns([2, 2, 6])
+    with btn_col1:
+        if st.button(":material/arrow_back: Back to runs", use_container_width=True):
+            st.session_state.pop("_ds_view_run", None)
+            st.rerun()
+    with btn_col2:
+        if st.button(":material/map: Open Map", use_container_width=True):
+            st.session_state["_ds_view_map_for_run"] = run_id
+            st.rerun()
 
     st.title(run["run_name"])
 
