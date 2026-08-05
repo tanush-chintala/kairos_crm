@@ -228,11 +228,25 @@ def _save_results_to_db(clinics: list[dict], p: dict, status: str = "unsaved") -
     """Write scrape results to donut_runs + donut_run_results. Returns run ID."""
     user_id = st.session_state["current_user"]["id"]
     area_name = p.get("area_name") or p.get("city_state") or "Donut area"
+    
+    if not p.get("area_name") and ("Unknown Location" in area_name or area_name == "Donut area"):
+        from collections import Counter
+        from db.queries import _city_from_address
+        cities = []
+        for c in clinics:
+            addr = c.get("address")
+            if addr:
+                city = _city_from_address(addr)
+                if city:
+                    cities.append(city)
+        if cities:
+            area_name = Counter(cities).most_common(1)[0][0]
+
     run_name = area_name + " — " + date.today().isoformat()
 
     run = queries.create_donut_run({
         "run_name": run_name,
-        "area_name": p.get("city_state") or area_name,
+        "area_name": area_name,
         "polygon_geojson": p.get("polygon_coords"),
         "buffer_miles": p.get("buffer_miles", 0.5),
         "total_clinics": len(clinics),
