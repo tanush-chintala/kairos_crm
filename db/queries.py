@@ -444,6 +444,19 @@ def update_donut_run_result(result_id: int, fields: dict, user_id: int | None = 
             summary=summary,
             notes=notes,
         )
+        
+        # If already promoted to CRM, also log this update to the CRM activities
+        # so the bot and account view can see the new call notes/status.
+        r = get_client().table("donut_run_results").select("promoted_account_id").eq("id", result_id).execute().data
+        if r and r[0].get("promoted_account_id"):
+            log_activity({
+                "account_id": r[0]["promoted_account_id"],
+                "date": datetime.now(timezone.utc).date().isoformat(),
+                "kairos_owner_id": user_id,
+                "activity_type": "Call" if new_status else "Note",
+                "summary": f"Scraper Checklist: {summary}",
+                "is_system": False,
+            })
 
 
 def promote_donut_result(result_id: int, user_id: int) -> dict:
@@ -468,6 +481,7 @@ def promote_donut_result(result_id: int, user_id: int) -> dict:
         "state": _state_from_address(r.get("address", "")),
         "pipeline_stage": "New Lead",
         "source_detail": f"Donut Scrape — {r.get('classification') or 'dental clinic'}",
+        "initial_encounter_summary": r.get("notes"),
         "creation_source": "donut_scrape",
         "kairos_owner_id": user_id,
         "creation_user_id": user_id,
