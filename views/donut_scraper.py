@@ -1118,55 +1118,68 @@ def _render_map_view(run_id: int) -> None:
     # 2. Filter Results
     filtered_results = [r for r in results if r.get("call_status", "Not Called") in selected_statuses and r.get("lat") and r.get("lng")]
 
-    # 3. Render Map
-    if not filtered_results:
-        st.warning("No locations match the selected criteria.")
-    else:
-        # Calculate center
-        lats = [float(r["lat"]) for r in filtered_results]
-        lngs = [float(r["lng"]) for r in filtered_results]
-        center_lat = sum(lats) / len(lats)
-        center_lng = sum(lngs) / len(lngs)
+    # 3. Layout Map and Notes (Left) / List (Right)
+    map_col, list_col = st.columns([7, 3])
 
-        m = folium.Map(location=[center_lat, center_lng], zoom_start=11)
+    with map_col:
+        if not filtered_results:
+            st.warning("No locations match the selected criteria.")
+        else:
+            # Calculate center
+            lats = [float(r["lat"]) for r in filtered_results]
+            lngs = [float(r["lng"]) for r in filtered_results]
+            center_lat = sum(lats) / len(lats)
+            center_lng = sum(lngs) / len(lngs)
+
+            m = folium.Map(location=[center_lat, center_lng], zoom_start=11)
+            
+            for r in filtered_results:
+                clinic_name = r.get("clinic_name", "Unknown")
+                address = r.get("address", "Unknown")
+                status = r.get("call_status", "Not Called")
+                tooltip = f"<b>{clinic_name}</b><br>{address}<br><i>{status}</i>"
+                
+                # Use different colors based on status priority
+                color = "green" if status == "Interested" else "orange" if status == "Call Back Later" else "blue"
+                
+                folium.Marker(
+                    [float(r["lat"]), float(r["lng"])],
+                    tooltip=tooltip,
+                    icon=folium.Icon(color=color)
+                ).add_to(m)
+
+            st_folium(m, width=700, height=500, returned_objects=[])
+
+        # 5. Notes Text Box (directly under the map, same column)
+        st.markdown("---")
+        st.markdown("### Route Notes")
         
-        for r in filtered_results:
-            clinic_name = r.get("clinic_name", "Unknown")
-            address = r.get("address", "Unknown")
-            status = r.get("call_status", "Not Called")
-            tooltip = f"<b>{clinic_name}</b><br>{address}<br><i>{status}</i>"
-            
-            # Use different colors based on status priority
-            color = "green" if status == "Interested" else "orange" if status == "Call Back Later" else "blue"
-            
-            folium.Marker(
-                [float(r["lat"]), float(r["lng"])],
-                tooltip=tooltip,
-                icon=folium.Icon(color=color)
-            ).add_to(m)
+        current_notes = run.get("map_notes") or ""
+        new_notes = st.text_area(
+            "Plan your route or leave notes here...",
+            value=current_notes,
+            height=200,
+            key=f"ds_map_notes_{run_id}"
+        )
+        if st.button("Save Notes", type="primary", key=f"ds_save_map_notes_{run_id}"):
+            queries.update_donut_run(run_id, {"map_notes": new_notes})
+            st.success("Notes saved successfully!")
+            st.rerun()
 
-        st_folium(m, width=700, height=500, returned_objects=[])
-
-        # 4. List Locations below Map
+    with list_col:
         st.markdown("### Location List")
-        for r in filtered_results:
-            st.markdown(f"**{r.get('clinic_name', 'Unknown')}**  \n📍 {r.get('address', 'Unknown')} — *{r.get('call_status', 'Not Called')}*")
-
-    # 5. Notes Text Box
-    st.markdown("---")
-    st.markdown("### Route Notes")
-    
-    current_notes = run.get("map_notes") or ""
-    new_notes = st.text_area(
-        "Plan your route or leave notes here...",
-        value=current_notes,
-        height=200,
-        key=f"ds_map_notes_{run_id}"
-    )
-    if st.button("Save Notes", type="primary", key=f"ds_save_map_notes_{run_id}"):
-        queries.update_donut_run(run_id, {"map_notes": new_notes})
-        st.success("Notes saved successfully!")
-        st.rerun()
+        if not filtered_results:
+            st.info("No locations to show.")
+        else:
+            for r in filtered_results:
+                st.markdown(
+                    f"<div style='font-size: 0.8rem; line-height: 1.3; margin-bottom: 12px; color: #334155;'>"
+                    f"<strong style='color: #0f172a; font-size: 0.85rem;'>{r.get('clinic_name', 'Unknown')}</strong><br>"
+                    f"📍 {r.get('address', 'Unknown')}<br>"
+                    f"<span style='color: #64748b; font-style: italic;'>{r.get('call_status', 'Not Called')}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
 
 
 def _render_run_detail(run_id: int) -> None:
