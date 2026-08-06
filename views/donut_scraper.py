@@ -1078,7 +1078,7 @@ def _render_runs_list_fragment() -> None:
 
 
 def _render_map_view(run_id: int) -> None:
-    """Blank placeholder for the map view."""
+    """Map view for a single run highlighting specific call statuses."""
     run = queries.get_donut_run(run_id)
     if not run:
         st.session_state.pop("_ds_view_map_for_run", None)
@@ -1097,8 +1097,76 @@ def _render_map_view(run_id: int) -> None:
             st.session_state.pop("_ds_view_run", None)
             st.rerun()
 
-    st.title(f"Map View: {run['run_name']}")
-    st.info("Map placeholder – specific instructions will be provided.")
+    st.title(f"Route Map: {run['run_name']}")
+    st.caption("Plan your in-person visits and routes for positive leads.")
+
+    results = queries.list_donut_run_results(run_id)
+    if not results:
+        st.info("No scraped results to display on map.")
+        return
+
+    # 1. Filter Multi-select
+    default_statuses = ["Interested", "Call Back Later", "No Answer", "Left Voicemail", "Not Called"]
+    
+    selected_statuses = st.multiselect(
+        "Show locations with Call Status:",
+        options=DONUT_CALL_STATUSES,
+        default=default_statuses,
+        key=f"ds_map_filter_{run_id}"
+    )
+
+    # 2. Filter Results
+    filtered_results = [r for r in results if r.get("call_status", "Not Called") in selected_statuses and r.get("lat") and r.get("lng")]
+
+    # 3. Render Map
+    if not filtered_results:
+        st.warning("No locations match the selected criteria.")
+    else:
+        # Calculate center
+        lats = [float(r["lat"]) for r in filtered_results]
+        lngs = [float(r["lng"]) for r in filtered_results]
+        center_lat = sum(lats) / len(lats)
+        center_lng = sum(lngs) / len(lngs)
+
+        m = folium.Map(location=[center_lat, center_lng], zoom_start=11)
+        
+        for r in filtered_results:
+            clinic_name = r.get("clinic_name", "Unknown")
+            address = r.get("address", "Unknown")
+            status = r.get("call_status", "Not Called")
+            tooltip = f"<b>{clinic_name}</b><br>{address}<br><i>{status}</i>"
+            
+            # Use different colors based on status priority
+            color = "green" if status == "Interested" else "orange" if status == "Call Back Later" else "blue"
+            
+            folium.Marker(
+                [float(r["lat"]), float(r["lng"])],
+                tooltip=tooltip,
+                icon=folium.Icon(color=color)
+            ).add_to(m)
+
+        st_folium(m, width=700, height=500, returned_objects=[])
+
+        # 4. List Locations below Map
+        st.markdown("### Location List")
+        for r in filtered_results:
+            st.markdown(f"**{r.get('clinic_name', 'Unknown')}**  \n📍 {r.get('address', 'Unknown')} — *{r.get('call_status', 'Not Called')}*")
+
+    # 5. Notes Text Box
+    st.markdown("---")
+    st.markdown("### Route Notes")
+    
+    current_notes = run.get("map_notes") or ""
+    new_notes = st.text_area(
+        "Plan your route or leave notes here...",
+        value=current_notes,
+        height=200,
+        key=f"ds_map_notes_{run_id}"
+    )
+    if st.button("Save Notes", type="primary", key=f"ds_save_map_notes_{run_id}"):
+        queries.update_donut_run(run_id, {"map_notes": new_notes})
+        st.success("Notes saved successfully!")
+        st.rerun()
 
 
 def _render_run_detail(run_id: int) -> None:

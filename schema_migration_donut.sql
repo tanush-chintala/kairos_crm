@@ -20,6 +20,7 @@ create table if not exists donut_runs (
     new_clinics int not null default 0,
     reused_clinics int not null default 0,
     status text not null default 'pending',  -- pending | confirmed | archived
+    map_notes text,
     created_by bigint references users(id),
     created_at timestamptz not null default now()
 );
@@ -94,3 +95,7 @@ create table if not exists donut_result_activities (
 
 create index if not exists donut_result_activities_result_idx
     on donut_result_activities (donut_run_result_id);
+
+-- ─── 8. Add map_notes to donut_runs ─────────────────────────────────────────
+alter table donut_runs
+    add column if not exists map_notes text;
