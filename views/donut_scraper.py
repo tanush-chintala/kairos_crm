@@ -548,6 +548,11 @@ def _render_results_map(
 
 _SIDEBAR_CSS = """
 <style>
+.block-container {
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+    max-width: 85rem !important;
+}
 .ds-section-label {
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em;
     text-transform: uppercase; color: #8a8f98; margin: 14px 0 4px;
@@ -1151,8 +1156,11 @@ def _render_map_view(run_id: int) -> None:
             st_folium(m, width=700, height=500, returned_objects=[])
 
         # 5. Notes Text Box (directly under the map, same column)
-        st.markdown("---")
-        st.markdown("### Route Notes")
+        st.markdown(
+            "<hr style='margin: 10px 0; border: none; border-top: 1px solid #e2e8f0;'>"
+            "<h3 style='margin-bottom: 5px; margin-top: 5px;'>Route Notes</h3>",
+            unsafe_allow_html=True
+        )
         
         current_notes = run.get("map_notes") or ""
         new_notes = st.text_area(
