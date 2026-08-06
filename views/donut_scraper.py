@@ -1183,7 +1183,7 @@ def _render_map_view(run_id: int) -> None:
                 st.markdown(
                     f"<div style='font-size: 0.8rem; line-height: 1.3; margin-bottom: 12px; color: #334155;'>"
                     f"<strong style='color: #0f172a; font-size: 0.85rem;'>{r.get('clinic_name', 'Unknown')}</strong><br>"
-                    f"📍 {r.get('address', 'Unknown')}<br>"
+                    f"{r.get('address', 'Unknown')}<br>"
                     f"<span style='color: #64748b; font-style: italic;'>{r.get('call_status', 'Not Called')}</span>"
                     f"</div>",
                     unsafe_allow_html=True

@@ -29,6 +29,10 @@ const BOT_WEBHOOK_TOKEN = Deno.env.get("BOT_WEBHOOK_TOKEN") ?? "";
 // Mirrors utils/constants.py — keep in sync.
 const PIPELINE_STAGES = [
   "New Lead",
+  "Not Called",
+  "No Answer",
+  "Left Voicemail",
+  "Call Back Later",
   "Contacted",
   "Interested",
   "Demo Scheduled",
@@ -36,9 +40,11 @@ const PIPELINE_STAGES = [
   "Onboarding",
   "Closed Won",
   "Closed Lost",
+  "Not Interested",
+  "Dead",
   "Nurture Later",
 ];
-const CLOSED_STAGES = ["Closed Won", "Closed Lost", "Nurture Later"];
+const CLOSED_STAGES = ["Closed Won", "Closed Lost", "Nurture Later", "Not Interested", "Dead"];
 const ACTIVITY_TYPES = [
   "In-person visit",
   "Phone call",
@@ -676,6 +682,19 @@ const TOOL_DECLARATIONS = [
       required: ["run_id", "status"],
     },
   },
+  {
+    name: "update_donut_run_notes",
+    description:
+      "Replace the free-text route/visit-planning notes on a Donut Scrape run's Route Map tab (the 'Route Notes' box under the map). Always replaces the full text - if the user wants to add to existing notes, read the current value from get_donut_run_detail first and send the combined text.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        run_id: { type: "INTEGER" },
+        map_notes: { type: "STRING", description: "Full replacement text for the route notes." },
+      },
+      required: ["run_id", "map_notes"],
+    },
+  },
 ];
 
 // deno-lint-ignore no-explicit-any
@@ -705,6 +724,7 @@ const WRITE_TOOLS = new Set([
   "promote_donut_result",
   "unpromote_donut_result",
   "set_donut_run_status",
+  "update_donut_run_notes",
 ]);
 
 // Writes are gated in code, not by the model: without commit the tool only
@@ -1412,7 +1432,7 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
         if (args.call_status !== undefined && !DONUT_CALL_STATUSES.includes(args.call_status)) {
           return { error: `call_status must be one of: ${DONUT_CALL_STATUSES.join(", ")}` };
         }
-        const { data: before } = await supabase.from("donut_run_results").select("donut_run_id, clinic_name").eq("id", resultId).maybeSingle();
+        const { data: before } = await supabase.from("donut_run_results").select("donut_run_id, clinic_name, promoted_account_id").eq("id", resultId).maybeSingle();
         if (!before) return { error: `No donut run result with id ${resultId}` };
         const { data: run } = await supabase.from("donut_runs").select("created_by").eq("id", before.donut_run_id).maybeSingle();
         if (run?.created_by !== userId) return { error: "That scrape run belongs to a different user." };
@@ -1424,7 +1444,36 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
         }
         const { error } = await supabase.from("donut_run_results").update(fields).eq("id", resultId);
-        return error ? { error: error.message } : { ok: true, clinic_name: before.clinic_name, updated: fields };
+        if (error) return { error: error.message };
+
+        // Mirrors db/queries.py update_donut_run_result: record a pre-CRM
+        // activity entry, and if this clinic is already promoted, also mirror
+        // the update into the CRM account's activity timeline so the app and
+        // bot always agree on what "Latest Update" shows.
+        const { data: actor } = await supabase.from("users").select("name").eq("id", userId).maybeSingle();
+        const actorName = actor?.name ?? "Team User";
+        const summaryParts: string[] = [];
+        if (fields.call_status) summaryParts.push(`Updated call status to '${fields.call_status}' by ${actorName}`);
+        if (fields.call_notes) summaryParts.push(`Call Note: ${fields.call_notes}`);
+        const summary = summaryParts.length ? summaryParts.join(" — ") : `Updated by ${actorName}`;
+        await supabase.from("donut_result_activities").insert({
+          donut_run_result_id: resultId,
+          user_id: userId,
+          activity_type: fields.call_status ? "Call Update" : "Note",
+          summary,
+          notes: fields.call_notes ?? null,
+        });
+        if (before.promoted_account_id) {
+          await supabase.from("activities").insert({
+            account_id: before.promoted_account_id,
+            date: chicagoToday(),
+            kairos_owner_id: userId,
+            activity_type: fields.call_status ? "Call" : "Note",
+            summary: `Scraper Checklist: ${summary}`,
+            is_system: false,
+          });
+        }
+        return { ok: true, clinic_name: before.clinic_name, updated: fields };
       }
       case "promote_donut_result": {
         const resultId = Number(args.result_id);
@@ -1460,6 +1509,20 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           };
         }
 
+        // Mirrors db/queries.py promote_donut_result: call_status maps directly
+        // onto pipeline_stage (both use the same literal stage names now), and
+        // Not Interested/Dead set a lost_reason so the stage is meaningful.
+        const callStatus = r.call_status || "Not Called";
+        const pipelineStage = callStatus === "Not Called" ? "New Lead" : callStatus;
+        let lostReason: string | null = null;
+        if (callStatus === "Not Interested") lostReason = "Dentist/owner not interested";
+        else if (callStatus === "Dead") lostReason = "Other";
+
+        const notesParts: string[] = [];
+        if (r.notes) notesParts.push(r.notes);
+        if (r.call_notes) notesParts.push(`Call Notes: ${r.call_notes}`);
+        const initialEncounterSummary = notesParts.length ? notesParts.join("\n\n") : null;
+
         const channelId = await getDonutChannelId();
         const fields: ToolArgs = {
           practice_name: r.clinic_name,
@@ -1468,26 +1531,58 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           website: r.website || null,
           city: cityFromAddress(r.address ?? ""),
           state: stateFromAddress(r.address ?? ""),
-          pipeline_stage: "New Lead",
+          pipeline_stage: pipelineStage,
           source_detail: `Donut Scrape — ${r.classification || "dental clinic"}`,
+          initial_encounter_summary: initialEncounterSummary,
           creation_source: "donut_scrape",
           kairos_owner_id: userId,
           creation_user_id: userId,
           donut_run_id: r.donut_run_id,
           channel_type_id: channelId,
         };
+        if (lostReason) fields.lost_reason = lostReason;
         const { data: account, error } = await supabase.from("accounts").insert(fields).select("id").single();
         if (error) return { error: error.message };
-        await supabase.from("donut_run_results").update({ promoted_account_id: account.id }).eq("id", resultId);
+        await supabase.from("donut_run_results").update({
+          promoted_account_id: account.id,
+          promoted_by: userId,
+          promoted_at: new Date().toISOString(),
+        }).eq("id", resultId);
         const { data: creator } = await supabase.from("users").select("name").eq("id", userId).maybeSingle();
-        await supabase.from("activities").insert({
-          account_id: account.id,
-          date: chicagoToday(),
-          kairos_owner_id: userId,
-          activity_type: "Account created",
-          summary: `Created from Donut Scrape — ${run?.run_name ?? `Run #${r.donut_run_id}`} by ${creator?.name ?? "a team member"}`,
-          is_system: true,
-        });
+
+        // File the pre-CRM activity log (donut_result_activities) into the CRM
+        // timeline, exactly like db/queries.py promote_donut_result — never just
+        // a single "created" note when the checklist has real call history.
+        const { data: preActivities } = await supabase
+          .from("donut_result_activities")
+          .select("*")
+          .eq("donut_run_result_id", resultId)
+          .order("created_at", { ascending: true });
+        if (preActivities?.length) {
+          const rows = preActivities.map((act: ToolArgs) => {
+            let actType = "Note";
+            if (act.activity_type === "Scraped") actType = "Donut Visit";
+            else if (act.activity_type === "Call Update" || act.activity_type === "Status Change") actType = "Call";
+            return {
+              account_id: account.id,
+              date: act.created_at ? String(act.created_at).slice(0, 10) : chicagoToday(),
+              kairos_owner_id: act.user_id ?? userId,
+              activity_type: actType,
+              summary: act.summary || "Pre-CRM Scraper Activity",
+              is_system: false,
+            };
+          });
+          await supabase.from("activities").insert(rows);
+        } else {
+          await supabase.from("activities").insert({
+            account_id: account.id,
+            date: chicagoToday(),
+            kairos_owner_id: userId,
+            activity_type: "Donut Visit",
+            summary: `Imported from Donut Scrape (Run #${r.donut_run_id}) by ${creator?.name ?? "a team member"}`,
+            is_system: false,
+          });
+        }
         return { ok: true, created: { id: account.id, practice_name: r.clinic_name } };
       }
       case "unpromote_donut_result": {
@@ -1498,10 +1593,22 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
         const { data: run } = await supabase.from("donut_runs").select("created_by").eq("id", r.donut_run_id).maybeSingle();
         if (run?.created_by !== userId) return { error: "That scrape run belongs to a different user." };
         if (!commit) {
-          return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+          return {
+            status: "needs_confirmation",
+            note: "Staged, not saved. This permanently deletes the linked CRM account (matches the app's unpromote button) - make that explicit in your proposal, then relay it and ask the user to reply yes to save.",
+          };
         }
-        const { error } = await supabase.from("donut_run_results").update({ promoted_account_id: null }).eq("id", resultId);
-        return error ? { error: error.message } : { ok: true, clinic_name: r.clinic_name };
+        const accountId = r.promoted_account_id;
+        const { error } = await supabase.from("donut_run_results").update({
+          promoted_account_id: null,
+          promoted_by: null,
+          promoted_at: null,
+        }).eq("id", resultId);
+        if (error) return { error: error.message };
+        // Mirrors db/queries.py unpromote_donut_result: unpromoting deletes the
+        // CRM account entirely, it does not just unlink it.
+        if (accountId) await supabase.from("accounts").delete().eq("id", accountId);
+        return { ok: true, clinic_name: r.clinic_name, deleted_account_id: accountId ?? null };
       }
       case "set_donut_run_status": {
         const runId = Number(args.run_id);
@@ -1516,6 +1623,18 @@ async function execTool(name: string, args: ToolArgs, userId: number, commit = f
           return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
         }
         const { error } = await supabase.from("donut_runs").update({ status }).eq("id", runId);
+        return error ? { error: error.message } : { ok: true, run_name: run.run_name };
+      }
+      case "update_donut_run_notes": {
+        const runId = Number(args.run_id);
+        if (!runId) return { error: "run_id is required" };
+        const { data: run } = await supabase.from("donut_runs").select("created_by, run_name").eq("id", runId).maybeSingle();
+        if (!run) return { error: `No donut run with id ${runId}` };
+        if (run.created_by !== userId) return { error: "That scrape run belongs to a different user." };
+        if (!commit) {
+          return { status: "needs_confirmation", note: "Staged, not saved. Relay the exact proposed change to the user and ask them to reply yes to save." };
+        }
+        const { error } = await supabase.from("donut_runs").update({ map_notes: String(args.map_notes ?? "") }).eq("id", runId);
         return error ? { error: error.message } : { ok: true, run_name: run.run_name };
       }
       default:
@@ -1689,7 +1808,7 @@ async function executePending(
           ? `${clinicName} was already promoted to the CRM.`
           : `Saved. Promoted ${clinicName} to the CRM.`);
       } else {
-        lines.push(`Saved. Removed ${clinicName} from the CRM (still in the scrape run).`);
+        lines.push(`Saved. Deleted ${clinicName}'s CRM account and unlinked it (still in the scrape run).`);
       }
       if (!result?.error) nav = { page: "donut_scraper", label: clinicName, account_id: null };
       continue;
@@ -1703,6 +1822,18 @@ async function executePending(
       } else {
         const pastStatus: Record<string, string> = { confirmed: "confirmed", unsaved: "unconfirmed", archived: "archived" };
         lines.push(`Saved. ${runName} ${pastStatus[String(call.args.status)] ?? "updated"}.`);
+      }
+      if (!result?.error) nav = { page: "donut_scraper", label: runName, account_id: null };
+      continue;
+    }
+
+    if (call.name === "update_donut_run_notes") {
+      const result = (await execTool(call.name, call.args, userId, true)) as ToolArgs;
+      const runName = result?.run_name ?? "the run";
+      if (result?.error) {
+        lines.push(`Could not update ${runName}: ${result.error}`);
+      } else {
+        lines.push(`Saved. Route notes updated on ${runName}.`);
       }
       if (!result?.error) nav = { page: "donut_scraper", label: runName, account_id: null };
       continue;
@@ -1764,9 +1895,9 @@ function systemPrompt(
     `Kairos Owners: ${usersList}.`,
     `Channel Types: ${channelsList}.`,
     "You can also manage settings the same way the app's Settings and Email Templates pages do: manage_user, manage_channel_type, manage_cadence, manage_cadence_step, and manage_email_template (add/create, update, deactivate/reactivate, and delete steps or templates), and edit_contact / edit_demo to update or delete an existing contact or demo (add_contact and log_demo remain the tools for adding new ones). Call list_settings first whenever you need to look up a cadence, step, template, or an inactive user/channel ID by name - the lists above only carry active users and channel types.",
-    "Safety limits on this settings surface: you may deactivate but must NEVER delete an entire account - if asked to delete an account, say that has to be done in the app and do not call any tool. You may delete cadence steps, email templates, contacts, and demos, but only after the normal 'Reply yes to save' confirmation like any other write.",
+    "Safety limits on this settings surface: you may deactivate but must NEVER delete an entire account directly - if asked to delete an account outright, say that has to be done in the app and do not call any tool. The one exception is unpromote_donut_result, which deletes the linked CRM account by design (same as the app's unpromote button) - that is allowed, but always say explicitly in the proposal that the account will be deleted. You may delete cadence steps, email templates, contacts, and demos, but only after the normal 'Reply yes to save' confirmation like any other write.",
     `Email template category must be one of: ${TEMPLATE_CATEGORIES.join(", ")}. Cadence step channel should be one of: ${CADENCE_CHANNELS.join(", ")} (a custom channel name is allowed, like the app). The same two-step confirm and near-duplicate pushback rules described above apply to all of these tools.`,
-    "You can also work the Donut Scraper: scrape runs are private per user, exactly like accounts - only show/edit runs owned by the texting user. Use list_donut_runs or find_donut_run to resolve a run by name/area before get_donut_run_detail, and get_donut_run_detail to resolve a clinic to a result_id before update_donut_result / promote_donut_result / unpromote_donut_result. update_donut_result logs a call outcome exactly like calling through the app's checklist. promote_donut_result creates a standalone CRM account tagged to the run and checks for duplicates first - warn the user of any duplicates the same way create_account does. set_donut_run_status confirms/unconfirms/archives a whole run (separate from promoting individual clinics). You cannot start a brand-new scrape (drawing an area and running Google Places search) from texts yet - if asked, say that has to be started from the Donut Scraper page in the app.",
+    "You can also work the Donut Scraper: scrape runs are private per user, exactly like accounts - only show/edit runs owned by the texting user. Use list_donut_runs or find_donut_run to resolve a run by name/area before get_donut_run_detail, and get_donut_run_detail to resolve a clinic to a result_id before update_donut_result / promote_donut_result / unpromote_donut_result. update_donut_result logs a call outcome exactly like calling through the app's checklist, and also mirrors onto the account's CRM timeline if that clinic is already promoted. promote_donut_result creates a standalone CRM account tagged to the run, maps the clinic's call_status onto pipeline_stage (Not Called becomes New Lead, Not Interested/Dead set a lost_reason), carries over its call notes and full pre-CRM activity history, and checks for duplicates first - warn the user of any duplicates the same way create_account does. unpromote_donut_result deletes that CRM account entirely, not just unlinks it - always say so plainly in the proposal. set_donut_run_status confirms/unconfirms/archives a whole run (separate from promoting individual clinics). update_donut_run_notes replaces the free-text 'Route Notes' box on a run's Route Map tab (route/visit planning notes, not a per-clinic field) - get_donut_run_detail returns the current value as run.map_notes if the user wants to append rather than replace. You cannot start a brand-new scrape (drawing an area and running Google Places search) from texts yet - if asked, say that has to be started from the Donut Scraper page in the app.",
     `Donut call statuses: ${DONUT_CALL_STATUSES.join(", ")}.`,
     "You are texting: reply in plain conversational text. No markdown, no asterisks, no emojis, no headers. Keep replies compact - short lines, one item per line for lists. Round nothing; quote fields as stored.",
   ].join("\n");
